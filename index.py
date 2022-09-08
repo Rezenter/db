@@ -2,9 +2,10 @@ import shtRipper
 from pathlib import Path
 import phys_const as c
 import math
+import json
 
 start_shotn = 41894
-start_shotn = 42169
+#start_shotn = 42123
 stop_shotn = 42214
 plasma_current_threshold = 50e3  # A
 
@@ -39,10 +40,20 @@ def time_to_ind(time: float) -> int:
     return math.floor(time / step)
 
 
+def dump(x, y):
+    with open('tmp.txt', 'w') as file:
+        for i in range(len(x)):
+            file.write('%.2e, %.2e\n' % (x[i], y[i]))
+
+
 class Shot:
     Ip_name: str = 'Ip внутр.(Пр2ВК) (инт.18)'
     Itf_name: str = 'Itf (2TF)(инт.23)'
     NBI1_name: str = 'Emission electrode current'
+    NBI2_I_name: str = 'Ток пучка новый инжектор'
+    NBI2_U_name: str = 'Напряжение пучка новый инжектор'
+    laser_name: str = 'Лазер'
+    Up_name: str = 'Up (внутреннее 175 петля)'
 
     def __init__(self, shotn: int):
         self.result = {
@@ -60,16 +71,20 @@ class Shot:
         if not self.scan_Bt():
             return
 
-        if not self.scan_NBI1():
-            return
+        self.scan_NBI1()
+        self.scan_NBI2()
+        self.scan_TS()
 
     def scan_ip(self) -> bool:
-        breakdown_threshold = 10e3  # A
+        breakdown_threshold: float = 10e3  # A
         flattop_range: float = 0.8  # from maximum
 
         start_ind: int = 0
         stop_ind: int = 0
 
+        if self.Ip_name not in self.sht:
+            self.result['err'] = 'SHT file has no plasma current'
+            return False
         ip_x, ip_y = downsample(x=self.sht[self.Ip_name]['x'], y=self.sht[self.Ip_name]['y'], scale=100)
 
         max_ind: int = 0
@@ -112,40 +127,148 @@ class Shot:
             'T_flattop_stop': ip_x[flat_stop_ind],
             'Ip': sum(ip_y[flat_start_ind: flat_stop_ind]) / c.Unit.k / (flat_stop_ind - flat_start_ind),
             'flattop_start_ind': time_to_ind(ip_x[flat_start_ind]),
-            'flattop_stop_ind': time_to_ind(ip_x[flat_stop_ind])
+            'flattop_stop_ind': time_to_ind(ip_x[flat_stop_ind]),
+            'T_start_index': time_to_ind(ip_x[start_ind]),
+            'T_stop_index': time_to_ind(ip_x[stop_ind]),
         })
         return True
 
-    def scan_Bt(self):
+    def scan_Bt(self) -> bool:
         Itf_to_Bt: float = 0.9e-5
-        freq_reduction = 10
+        freq_reduction: int = 10
+
+        if self.Itf_name not in self.sht:
+            self.result['err'] = 'SHT file has no Itf'
+            return False
+
         self.result['Bt'] = Itf_to_Bt * sum(self.sht[self.Itf_name]['y'][self.result['flattop_start_ind'] // freq_reduction: self.result['flattop_stop_ind'] // freq_reduction]) / \
                             (self.result['flattop_stop_ind'] // freq_reduction - self.result['flattop_start_ind'] // freq_reduction)
         return True
 
-    def scan_NBI1(self):
-        freq_reduction = 10
-        scale = 1000
-        threshold = 0.5
+    def scan_NBI1(self) -> bool:
+        freq_reduction: int = 10
+        scale: int = 100
+        threshold: float = 0.5
+        shutdown: float = 0.8
 
-        flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
-        flattop_stop_ind = self.result['flattop_stop_ind'] // (freq_reduction * scale)
+        if self.NBI1_name not in self.sht:
+            self.result['NBI1'] = {
+                'err': 'SHT file has no NBI_1 signal.'
+            }
+            return False
+
+        plasma_start_ind = self.result['T_start_index'] // (freq_reduction * scale)
+        plasma_stop_ind = self.result['T_stop_index'] // (freq_reduction * scale)
         x, y = downsample(x=self.sht[self.NBI1_name]['x'], y=self.sht[self.NBI1_name]['y'], scale=scale)
         start_ind: int = -1
-        stop_ind: int = -1
-        for i in range(flattop_start_ind, flattop_stop_ind):
+        stop_ind: int = plasma_stop_ind
+        found: bool = False
+        y_max: float = 0
+        for i in range(plasma_start_ind, plasma_stop_ind):
             if y[i] > threshold and start_ind < 0:
                 start_ind = i
-            if y[i] > self.result['T_flattop_stop']:
-                stop_ind = i - 1
+                found = True
+            if y[i] < y_max * shutdown and start_ind > 0:
+                stop_ind = i
                 break
-
+            y_max = max(y_max, y[i])
+        if found:
+            self.result['NBI1'] = {
+                'T_start': x[start_ind],
+                'T_stop': x[stop_ind],
+                'I_max': y_max
+            }
+        else:
+            self.result['NBI1'] = {
+                'err': 'NBI1 current does not reach threshold.',
+                'I_max': y_max
+            }
         return True
 
+    def scan_NBI2(self) -> bool:
+        freq_reduction: int = 10
+        scale: int = 100
+        threshold: float = 1.0
+        shutdown: float = 0.8
+
+        if self.NBI2_I_name not in self.sht or self.NBI2_U_name not in self.sht:
+            self.result['NBI2'] = {
+                'err': 'SHT file has not enough NBI_2 signals.'
+            }
+            return False
+
+        plasma_start_ind = self.result['T_start_index'] // (freq_reduction * scale)
+        plasma_stop_ind = self.result['T_stop_index'] // (freq_reduction * scale)
+        x, y = downsample(x=self.sht[self.NBI2_U_name]['x'], y=self.sht[self.NBI2_U_name]['y'], scale=scale)
+        start_ind: int = -1
+        stop_ind: int = plasma_stop_ind
+        u_max: float = 0
+        found: bool = False
+        for i in range(plasma_start_ind, plasma_stop_ind):
+            if y[i] > threshold and start_ind < 0:
+                start_ind = i
+                found = True
+            if y[i] < u_max * shutdown and start_ind > 0:
+                stop_ind = i
+                break
+            u_max = max(u_max, y[i])
+
+        if found:
+            x, y = downsample(x=self.sht[self.NBI2_I_name]['x'], y=self.sht[self.NBI2_I_name]['y'], scale=scale)
+            i_max: float = max(y[start_ind: stop_ind])
+            self.result['NBI2'] = {
+                'T_start': x[start_ind],
+                'T_stop': x[stop_ind],
+                'U_max': u_max,
+                'I_max': i_max
+            }
+        else:
+            self.result['NBI2'] = {
+                'err': 'NBI2 voltage does not reach threshold',
+                'U_max': u_max
+            }
+        return True
+
+    def scan_TS(self) -> bool:
+        der_threshold: float = -0.15
+        pulse_length: int = 210
+
+        if self.laser_name not in self.sht:
+            self.result['TS'] = {
+                'err': 'SHT file has no laser signal.'
+            }
+            return False
+
+        x = self.sht[self.laser_name]['x']
+        y = self.sht[self.laser_name]['y']
+
+        pulses: list[float] = []
+        i: int = 0
+        while i < len(y) - 1:
+            if y[i + 1] - y[i] < der_threshold:
+                pulses.append((x[i] + x[i + 1]) * 0.5)
+                i += pulse_length
+            i += 1
+
+        if len(pulses) == 0:
+            self.result['TS'] = {
+                'err': 'No laser pulses detected'
+            }
+        else:
+            self.result['TS'] = {
+                'time': pulses
+            }
+            return False
+        return False
+
+res = []
 for shotn in range(start_shotn, stop_shotn):
     current = Shot(shotn=shotn)
-    print(current.result)
-    break
+    res.append(current.result)
+    print(current.result['shotn'])
+
+with open('index.json', 'w') as file:
+    json.dump(res, file, indent=2)
 
 print('Code OK.')
 
