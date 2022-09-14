@@ -4,14 +4,17 @@ import phys_const as c
 import math
 import json
 
-start_shotn = 41894
-#start_shotn = 42123
+start_shotn = 41157
+#start_shotn = 42169
 stop_shotn = 42214
+save_interval = 50
+sht_size_threshold = 8  # MB
+
 plasma_current_threshold = 50e3  # A
 
-sht_path = 'd:/data/globus/sht/sht'
+#sht_path = 'd:/data/globus/sht/sht'
+sht_path = 'W:/sht'
 sht_ext = '.SHT'
-
 
 def downsample(x: list[float], y: list[float], scale: int) -> (list[float], list[float]):
     index: int = 0
@@ -24,15 +27,17 @@ def downsample(x: list[float], y: list[float], scale: int) -> (list[float], list
     return res_x, res_y
 
 
-def window_average_gen(y: list[float]) -> float:
-    window: int = 31  # must be odd
+def window_average(y: list[float], half_window: int) -> list[float]:
+    window: int = half_window * 2 + 1
     window_half: int = (window - 1) // 2
     index: int = window_half
     curr: float = sum(y[0:window])
+    res_y: list[float] = []
     while index + window_half + 1 < len(y):
         curr += y[index + window_half + 1] - y[index - window_half]
-        yield curr / window
+        res_y.append(curr / window)
         index += 1
+    return res_y
 
 
 def time_to_ind(time: float) -> int:
@@ -63,6 +68,10 @@ class Shot:
         if not filename.exists():
             self.result['err'] = 'shot %d does not exist\n' % shotn
             return
+        if filename.stat().st_size < sht_size_threshold * 1024 * 1024:
+            self.result['err'] = 'shot %d has suspicious file size\n' % shotn
+            return
+
         self.sht = shtRipper.ripper.read(filename)
 
         if not self.scan_ip():
@@ -77,7 +86,7 @@ class Shot:
 
     def scan_ip(self) -> bool:
         breakdown_threshold: float = 10e3  # A
-        flattop_range: float = 0.8  # from maximum
+        flattop_range: float = 0.7  # from maximum
 
         start_ind: int = 0
         stop_ind: int = 0
@@ -85,7 +94,7 @@ class Shot:
         if self.Ip_name not in self.sht:
             self.result['err'] = 'SHT file has no plasma current'
             return False
-        ip_x, ip_y = downsample(x=self.sht[self.Ip_name]['x'], y=self.sht[self.Ip_name]['y'], scale=100)
+        ip_x, ip_y = downsample(x=self.sht[self.Ip_name]['x'], y=window_average(self.sht[self.Ip_name]['y'], 1500), scale=100)
 
         max_ind: int = 0
         plasma_found: bool = False
@@ -111,13 +120,37 @@ class Shot:
         low_limit = ip_y[max_ind] * flattop_range
         for ind in range(start_ind, stop_ind):
             if ip_y[ind] > low_limit:
-                if flat_start_ind == 0:
-                    flat_start_ind = ind
-
-            else:
-                if flat_start_ind != 0:
-                    flat_stop_ind = ind
+                flat_start_ind = ind
+                break
+        for ind in range(stop_ind, start_ind, -1):
+            if ip_y[ind] > low_limit:
+                flat_stop_ind = ind
+                break
+        ip_prev: float = -1e99
+        ip: float = 0.0
+        while ip - ip_prev > 1:
+            if flat_stop_ind > flat_start_ind:
+                low_limit = sum(ip_y[flat_start_ind: flat_stop_ind]) / (flat_stop_ind - flat_start_ind) * 0.95
+                for ind in range(flat_start_ind, stop_ind):
+                    if ip_y[ind] > low_limit:
+                        flat_start_ind = ind
+                        break
+                for ind in range(flat_stop_ind, start_ind, -1):
+                    if ip_y[ind] > low_limit:
+                        flat_stop_ind = ind
+                        break
+                if flat_stop_ind > flat_start_ind:
+                    ip_prev = ip
+                    ip = sum(ip_y[flat_start_ind: flat_stop_ind]) / c.Unit.k / (flat_stop_ind - flat_start_ind)
+                else:
                     break
+            else:
+                break
+
+        if ip == 0.0:
+            self.result['err'] = 'No flattop detected'
+            return False
+
         self.result.update({
             'T_start': ip_x[start_ind],
             'T_stop': ip_x[stop_ind],
@@ -125,7 +158,7 @@ class Shot:
             'Ip_max': ip_y[max_ind] / c.Unit.k,
             'T_flattop_start': ip_x[flat_start_ind],
             'T_flattop_stop': ip_x[flat_stop_ind],
-            'Ip': sum(ip_y[flat_start_ind: flat_stop_ind]) / c.Unit.k / (flat_stop_ind - flat_start_ind),
+            'Ip': ip,
             'flattop_start_ind': time_to_ind(ip_x[flat_start_ind]),
             'flattop_stop_ind': time_to_ind(ip_x[flat_stop_ind]),
             'T_start_index': time_to_ind(ip_x[start_ind]),
@@ -188,7 +221,8 @@ class Shot:
     def scan_NBI2(self) -> bool:
         freq_reduction: int = 10
         scale: int = 100
-        threshold: float = 1.0
+        threshold_u: float = 1.0
+        threshold_i: float = 1.0
         shutdown: float = 0.8
 
         if self.NBI2_I_name not in self.sht or self.NBI2_U_name not in self.sht:
@@ -199,23 +233,23 @@ class Shot:
 
         plasma_start_ind = self.result['T_start_index'] // (freq_reduction * scale)
         plasma_stop_ind = self.result['T_stop_index'] // (freq_reduction * scale)
-        x, y = downsample(x=self.sht[self.NBI2_U_name]['x'], y=self.sht[self.NBI2_U_name]['y'], scale=scale)
+        x, y = downsample(x=self.sht[self.NBI2_I_name]['x'], y=self.sht[self.NBI2_I_name]['y'], scale=scale)
         start_ind: int = -1
         stop_ind: int = plasma_stop_ind
-        u_max: float = 0
+        i_max: float = 0
         found: bool = False
         for i in range(plasma_start_ind, plasma_stop_ind):
-            if y[i] > threshold and start_ind < 0:
+            if y[i] > threshold_i and start_ind < 0:
                 start_ind = i
                 found = True
-            if y[i] < u_max * shutdown and start_ind > 0:
+            if y[i] < i_max * shutdown and start_ind > 0:
                 stop_ind = i
                 break
-            u_max = max(u_max, y[i])
+            i_max = max(i_max, y[i])
 
         if found:
-            x, y = downsample(x=self.sht[self.NBI2_I_name]['x'], y=self.sht[self.NBI2_I_name]['y'], scale=scale)
-            i_max: float = max(y[start_ind: stop_ind])
+            x, y = downsample(x=self.sht[self.NBI2_U_name]['x'], y=self.sht[self.NBI2_U_name]['y'], scale=scale)
+            u_max: float = max(y[start_ind: stop_ind])
             self.result['NBI2'] = {
                 'T_start': x[start_ind],
                 'T_stop': x[stop_ind],
@@ -224,8 +258,8 @@ class Shot:
             }
         else:
             self.result['NBI2'] = {
-                'err': 'NBI2 voltage does not reach threshold',
-                'U_max': u_max
+                'err': 'NBI2 current does not reach threshold',
+                'U_max': i_max
             }
         return True
 
@@ -261,14 +295,24 @@ class Shot:
             return False
         return False
 
+
+def save(res):
+    with open('index.json', 'w') as file:
+        json.dump(res, file, indent=2)
+        print('\nSAVED\n')
+
+
 res = []
+last_save = start_shotn
 for shotn in range(start_shotn, stop_shotn):
+    print(shotn)
     current = Shot(shotn=shotn)
     res.append(current.result)
-    print(current.result['shotn'])
+    if shotn - last_save > save_interval - 1:
+        save(res)
+        last_save = shotn
 
-with open('index.json', 'w') as file:
-    json.dump(res, file, indent=2)
+save(res)
 
 print('Code OK.')
 
