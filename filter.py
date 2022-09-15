@@ -12,12 +12,17 @@ request_NBI2 = {
     'duration_max': 200
 }
 
-request_Bt = {
-    'is': False,
+limit_Bt = {
+    'is': True,
     'min': 0.85,
     'max': 1.0
 }
-request_flattop = {
+limit_Ip = {
+    'is': True,
+    'min': 285,
+    'max': 310
+}
+limit_flattop = {
     'is': True,
     'min': 40,
     'max': 200
@@ -51,12 +56,16 @@ for shot in db:
                request_NBI2['duration_max']:
             continue
 
-    if request_Bt['is']:
-        if not request_Bt['min'] <= shot['Bt'] <= request_Bt['max']:
+    if limit_Bt['is']:
+        if not limit_Bt['min'] <= shot['Bt'] <= limit_Bt['max']:
             continue
 
-    if request_flattop['is']:
-        if not request_flattop['min'] <= (shot["T_flattop_stop"] - shot["T_flattop_start"]) * 1000 <= request_flattop['max']:
+    if limit_Ip['is']:
+        if not limit_Ip['min'] <= shot['Ip'] <= limit_Ip['max']:
+            continue
+
+    if limit_flattop['is']:
+        if not limit_flattop['min'] <= (shot["T_flattop_stop"] - shot["T_flattop_start"]) * 1000 <= limit_flattop['max']:
             continue
 
     flattop: float = (shot["T_flattop_stop"] - shot["T_flattop_start"]) * 1000
