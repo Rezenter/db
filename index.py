@@ -6,8 +6,14 @@ import json
 
 start_shotn = 41157
 #start_shotn = 42169
-stop_shotn = 42214
-save_interval = 50
+stop_shotn = 42421
+overrite: bool = False
+
+bad_sht = [
+    42412
+]
+
+save_interval = 10
 sht_size_threshold = 8  # MB
 
 plasma_current_threshold = 50e3  # A
@@ -297,15 +303,34 @@ class Shot:
 
 
 def save(res):
-    with open('index.json', 'w') as file:
+    with open('db/index.json', 'w') as file:
         json.dump(res, file, indent=2)
         print('\nSAVED\n')
 
 
 res = []
 last_save = start_shotn
+if not overrite:
+    index_path = Path('db/index.json')
+    if index_path.is_file():
+        with open(index_path, 'r') as file:
+            res = json.load(file)
+
+current_ind = 0
 for shotn in range(start_shotn, stop_shotn):
+    while current_ind < len(res) and res[current_ind]['shotn'] < shotn:
+        current_ind += 1
+    if current_ind < len(res) and res[current_ind]['shotn'] == shotn:
+        continue
+
     print(shotn)
+    if shotn in bad_sht:
+        res.append({
+            'shotn': shotn,
+            'err': 'sht is marked "bad"'
+        })
+        continue
+
     current = Shot(shotn=shotn)
     res.append(current.result)
     if shotn - last_save > save_interval - 1:
