@@ -1,11 +1,21 @@
 import requests
 import json
 
-#H-D
+
 #0.9T 0.4MA
+#H-D
 shots = [41644, 41645, 41649, 41661, 41662, 41664, 41665, 41666, 42123]
 
-#0.9T 0.35MA
+#D-D
+shots = [
+    {
+        'shotn': 42416
+    }, {
+        'shotn': 42417
+    }
+]
+
+#0.9T 0.35MA H-D
 shots = [
     {
         'shotn': 42095
@@ -35,6 +45,27 @@ shots = [
         'shotn': 41630
     }, {
         'shotn': 41631
+    }
+]
+
+#0.9T 0.35MA D-D
+shots = [
+    {
+        'shotn': 41585
+    }, {
+        'shotn': 42362
+    }, {
+        'shotn': 42364
+    }, {
+        'shotn': 42366
+    }, {
+        'shotn': 42367
+    }, {
+        'shotn': 42368
+    }, {
+        'shotn': 42410
+    }, {
+        'shotn': 42414
     }
 ]
 
@@ -92,7 +123,7 @@ NBI_delay_stop = 0 # ms
 
 lines = []
 
-with open('index_all.json', 'r') as file:
+with open('db/index.json', 'r') as file:
     db_arr = json.load(file)
     db = {
         shot['shotn']: shot for shot in db_arr
@@ -107,16 +138,13 @@ with open('index_all.json', 'r') as file:
             'shotn': shotn
         }, verify=False).text
         shot = json.loads(resp)
-        if 'err' in shot:
+        if not shot['ok']:
+            print(shot['description'])
             fuck
         shot['sht'] = db[shotn]
 
         with open('tmp.json', 'w') as dump:
-            json.dump(shot, dump)
-
-        if shot['sht']["T_flattop_start"]*1000 < shot['shot']['override']['t_start'] or \
-                shot['sht']["T_flattop_stop"]*1000 > shot['shot']['override']['t_stop']:
-            fuck
+            json.dump(shot, dump, indent=2)
 
         for cfm_event in shot['cfm']['data']:
             event = shot['shot']['events'][cfm_event['event_index']]
@@ -130,7 +158,7 @@ with open('index_all.json', 'r') as file:
                         break
                 if flag:
                     continue
-            if not shot['sht']["T_flattop_start"]*1000 < event['timestamp'] < shot['sht']["T_flattop_stop"]*1000:
+            if not shot['sht']["T_flattop_start"] * 1000 < event['timestamp'] < shot['sht']["T_flattop_stop"] * 1000:
                 continue
             if not shot['sht']['NBI1']["T_start"] * 1000 + NBI_delay_start < event['timestamp'] < shot['sht']['NBI1']["T_stop"] * 1000 - NBI_delay_stop:
                 continue

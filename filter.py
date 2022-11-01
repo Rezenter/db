@@ -19,8 +19,8 @@ limit_Bt = {
 }
 limit_Ip = {
     'is': True,
-    'min': 285,
-    'max': 310
+    'min': 375,
+    'max': 415
 }
 limit_flattop = {
     'is': True,
@@ -30,7 +30,7 @@ limit_flattop = {
 
 baddies: list[int] = [41845]
 
-with open('index_all.json', 'r') as file:
+with open('db/index.json', 'r') as file:
     db = json.load(file)
 
 for shot in db:
