@@ -4,10 +4,13 @@ import phys_const as c
 import math
 import json
 
-start_shotn = 41157
+#start_shotn = 41157
 #start_shotn = 42169
-stop_shotn = 42421
+start_shotn = 42000
+stop_shotn = 43044
 overrite: bool = False
+
+db_file: str = 'db/index.json'
 
 bad_sht = [
     42412
@@ -65,6 +68,8 @@ class Shot:
     NBI2_U_name: str = 'Напряжение пучка новый инжектор'
     laser_name: str = 'Лазер'
     Up_name: str = 'Up (внутреннее 175 петля)'
+    D_alpha_42: str = 'D-alfa  хорда R=42 cm'
+    D_alpha_50: str = 'D-alfa  хорда R=50 cm'
 
     def __init__(self, shotn: int):
         self.result = {
@@ -89,6 +94,8 @@ class Shot:
         self.scan_NBI1()
         self.scan_NBI2()
         self.scan_TS()
+        if 'err' not in self.result['TS']:
+            self.scan_H_alpha()
 
     def scan_ip(self) -> bool:
         breakdown_threshold: float = 10e3  # A
@@ -298,41 +305,91 @@ class Shot:
             self.result['TS'] = {
                 'time': pulses
             }
-            return False
+            return True
         return False
+
+    def find_closest_TS(self, time: float) -> int:
+        for ind in range(len(self.result['TS']['time']) - 1):
+            if self.result['TS']['time'][ind] <= time < self.result['TS']['time'][ind + 1]:
+                if time - self.result['TS']['time'][ind] <= self.result['TS']['time'][ind + 1] - time:
+                    return ind
+                else:
+                    return ind + 1
+        return -1
+
+    def scan_H_alpha(self) -> bool:
+        freq_reduction: int = 1
+        scale: int = 150
+        der_threshold: float = 0.4
+        pulse_length: int = 5
+
+        if self.D_alpha_42 not in self.sht:
+            self.result['ELM'] = {
+                'err': 'SHT file has no d_alpha signal.'
+            }
+            return False
+
+
+        flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
+        flattop_stop_ind = self.result['flattop_stop_ind'] // (freq_reduction * scale)
+        x, y = downsample(x=self.sht[self.D_alpha_42]['x'], y=self.sht[self.D_alpha_42]['y'], scale=scale)
+
+        self.result['ELM']: list[float] = []
+        i: int = flattop_start_ind
+        while i < flattop_stop_ind - 1:
+            if y[i + 1] - y[i] > der_threshold:
+                highRes_ind = i * freq_reduction * scale
+
+                max_der: float = 0
+                max_ind: int = highRes_ind
+                der_halfWindow: int = 3
+
+                for j in range(highRes_ind, highRes_ind + scale):
+                    candidate: float = self.sht[self.D_alpha_42]['y'][j + der_halfWindow] - self.sht[self.D_alpha_42]['y'][j - der_halfWindow]
+                    if candidate > max_der:
+                        max_der = candidate
+                        max_ind = j
+                las_ind: int = self.find_closest_TS(self.sht[self.D_alpha_42]['x'][max_ind])
+                self.result['ELM'].append({
+                    'time': self.sht[self.D_alpha_42]['x'][max_ind],
+                    'laser_ind': las_ind,
+                    'las_delay': self.result['TS']['time'][las_ind] - self.sht[self.D_alpha_42]['x'][max_ind]
+                })
+                i += pulse_length
+            i += 1
+
+        return True
 
 
 def save(res):
-    with open('db/index.json', 'w') as file:
+    with open(db_file, 'w') as file:
         json.dump(res, file, indent=2)
         print('\nSAVED\n')
 
 
-res = []
+res = {}
 last_save = start_shotn
 if not overrite:
-    index_path = Path('db/index.json')
+    index_path = Path(db_file)
     if index_path.is_file():
         with open(index_path, 'r') as file:
             res = json.load(file)
 
 current_ind = 0
-for shotn in range(start_shotn, stop_shotn):
-    while current_ind < len(res) and res[current_ind]['shotn'] < shotn:
-        current_ind += 1
-    if current_ind < len(res) and res[current_ind]['shotn'] == shotn:
+for shotn in range(start_shotn, stop_shotn + 1):
+    if shotn in bad_sht:
+        res[shotn] = {
+            'shotn': shotn,
+            'err': 'sht is marked "bad"'
+        }
+        continue
+    if not overrite and str(shotn) in res:
         continue
 
     print(shotn)
-    if shotn in bad_sht:
-        res.append({
-            'shotn': shotn,
-            'err': 'sht is marked "bad"'
-        })
-        continue
 
     current = Shot(shotn=shotn)
-    res.append(current.result)
+    res[shotn] = current.result
     if shotn - last_save > save_interval - 1:
         save(res)
         last_save = shotn
