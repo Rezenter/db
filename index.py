@@ -4,10 +4,10 @@ import phys_const as c
 import math
 import json
 
-#start_shotn = 41157
-#start_shotn = 42169
-start_shotn = 42000
+start_shotn = 41000
 stop_shotn = 43044
+
+
 overrite: bool = False
 
 db_file: str = 'db/index.json'
@@ -320,7 +320,7 @@ class Shot:
     def scan_H_alpha(self) -> bool:
         freq_reduction: int = 1
         scale: int = 150
-        der_threshold: float = 0.4
+        der_threshold: float = 0.35
         pulse_length: int = 5
 
         if self.D_alpha_42 not in self.sht:
@@ -344,7 +344,7 @@ class Shot:
                 max_ind: int = highRes_ind
                 der_halfWindow: int = 3
 
-                for j in range(highRes_ind, highRes_ind + scale):
+                for j in range(highRes_ind, highRes_ind + scale*2):
                     candidate: float = self.sht[self.D_alpha_42]['y'][j + der_halfWindow] - self.sht[self.D_alpha_42]['y'][j - der_halfWindow]
                     if candidate > max_der:
                         max_der = candidate
