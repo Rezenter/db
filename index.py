@@ -4,26 +4,31 @@ import phys_const as c
 import math
 import json
 
-start_shotn = 41000
-stop_shotn = 43044
+start_shotn: int = 37000
+stop_shotn: int = 43103
 
 
 overrite: bool = False
 
 db_file: str = 'db/index.json'
 
-bad_sht = [
+bad_sht: list[int] = [
+    38692,
+    38971,
+    38981,
+    39269,
+    39338,
     42412
 ]
 
-save_interval = 10
-sht_size_threshold = 8  # MB
+save_interval: int = 10
+sht_size_threshold: int = 8  # MB
 
-plasma_current_threshold = 50e3  # A
+plasma_current_threshold: float = 50e3  # A
 
 #sht_path = 'd:/data/globus/sht/sht'
-sht_path = 'W:/sht'
-sht_ext = '.SHT'
+sht_path: str = 'W:/sht'
+sht_ext: str = '.SHT'
 
 def downsample(x: list[float], y: list[float], scale: int) -> (list[float], list[float]):
     index: int = 0
