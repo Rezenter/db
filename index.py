@@ -1,14 +1,23 @@
+import phys_const
 import shtRipper
 from pathlib import Path
 import phys_const as c
 import math
 import json
 
+##to-do:
+# add time/date
+# guess plasma isotope
+
 start_shotn: int = 37000
-stop_shotn: int = 43103
+start_shotn = 38208
+#start_shotn: int = 40031
+stop_shotn: int = 43876
+#stop_shotn: int = 40035
 
 
-overrite: bool = False
+#overrite: bool = False
+overrite: bool = True
 
 db_file: str = 'db/index.json'
 
@@ -18,7 +27,8 @@ bad_sht: list[int] = [
     38981,
     39269,
     39338,
-    42412
+    42412,
+    43198
 ]
 
 save_interval: int = 10
@@ -44,12 +54,22 @@ def downsample(x: list[float], y: list[float], scale: int) -> (list[float], list
 def window_average(y: list[float], half_window: int) -> list[float]:
     window: int = half_window * 2 + 1
     window_half: int = (window - 1) // 2
-    index: int = window_half
-    curr: float = sum(y[0:window])
+    index: int = 0
+    curr: float = sum(y[:window_half])
     res_y: list[float] = []
+    while index < window_half:
+        curr += y[index + window_half - 1]
+        index += 1
+        res_y.append(curr / (index + window_half))
+
     while index + window_half + 1 < len(y):
         curr += y[index + window_half + 1] - y[index - window_half]
+        index += 1
         res_y.append(curr / window)
+
+    while index < len(y):
+        curr -= y[index]
+        res_y.append(curr / (len(y) - index))
         index += 1
     return res_y
 
@@ -185,7 +205,10 @@ class Shot:
         return True
 
     def scan_Bt(self) -> bool:
-        Itf_to_Bt: float = 0.9e-5
+        #Itf_to_Bt: float = 0.9e-5
+        Itf_to_Bt: float = 1.26e-6 * 16 / (math.tau * 0.36)
+        #                   vacuum   coils            R
+
         freq_reduction: int = 10
 
         if self.Itf_name not in self.sht:
@@ -295,10 +318,13 @@ class Shot:
         y = self.sht[self.laser_name]['y']
 
         pulses: list[float] = []
+        Upl: list[float] = []
         i: int = 0
         while i < len(y) - 1:
             if y[i + 1] - y[i] < der_threshold:
                 pulses.append((x[i] + x[i + 1]) * 0.5)
+                Upl.append(self.match_Upl(pulses[-1]))
+                #print(shotn, pulses[-1] * 1e3, Upl[-1])
                 i += pulse_length
             i += 1
 
@@ -308,7 +334,8 @@ class Shot:
             }
         else:
             self.result['TS'] = {
-                'time': pulses
+                'time': pulses,
+                'Upl': Upl
             }
             return True
         return False
@@ -321,6 +348,21 @@ class Shot:
                 else:
                     return ind + 1
         return -1
+
+    def match_Upl(self, time: float) -> float:
+        if self.Up_name not in self.sht:
+            self.result['err'] = 'SHT file has no loop voltage!'
+            return -999
+        if time > 0.26:
+            return -888
+        if 'Upl' not in self.sht:
+            self.sht['Upl'] = window_average(self.sht[self.Up_name]['y'], 165)
+            #print(1/ (2*165 * (self.sht[self.Up_name]['x'][1] - self.sht[self.Up_name]['x'][0])))
+        step: float = self.sht[self.Up_name]['x'][1] - self.sht[self.Up_name]['x'][0]
+        t_prev_ind: int = math.floor(time / step)
+        res = phys_const.interpolate(x_prev=self.sht[self.Up_name]['x'][t_prev_ind], x_tgt=time, x_next= self.sht[self.Up_name]['x'][t_prev_ind + 1],
+                                     y_prev=self.sht['Upl'][t_prev_ind], y_next=self.sht['Upl'][t_prev_ind + 1])
+        return res
 
     def scan_H_alpha(self) -> bool:
         freq_reduction: int = 1

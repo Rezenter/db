@@ -118,16 +118,17 @@ shots = [
         'skip:': [207, 210, 213, 216, 219]
     }]'''
 
+
+#0.8T 0.4MA OH
+shots = [{'shotn': x} for x in range(41504, 41517)]
+
 NBI_delay_start = 10 # ms
 NBI_delay_stop = 0 # ms
 
 lines = []
 
 with open('db/index.json', 'r') as file:
-    db_arr = json.load(file)
-    db = {
-        shot['shotn']: shot for shot in db_arr
-    }
+    db = json.load(file)
 
     for req_shot in shots:
         shotn = req_shot['shotn']
@@ -141,7 +142,7 @@ with open('db/index.json', 'r') as file:
         if not shot['ok']:
             print(shot['description'])
             fuck
-        shot['sht'] = db[shotn]
+        shot['sht'] = db[str(shotn)]
 
         with open('tmp.json', 'w') as dump:
             json.dump(shot, dump, indent=2)
@@ -160,12 +161,16 @@ with open('db/index.json', 'r') as file:
                     continue
             if not shot['sht']["T_flattop_start"] * 1000 < event['timestamp'] < shot['sht']["T_flattop_stop"] * 1000:
                 continue
+            '''
             if not shot['sht']['NBI1']["T_start"] * 1000 + NBI_delay_start < event['timestamp'] < shot['sht']['NBI1']["T_stop"] * 1000 - NBI_delay_stop:
                 continue
             if not shot['sht']['NBI2']["T_start"] * 1000 + NBI_delay_start < event['timestamp'] < shot['sht']['NBI2']["T_stop"] * 1000 - NBI_delay_stop:
                 continue
-            lines.append('%d %.2f %.2e %.2e %.2e %.2e %.3f %.3f' % (shotn,
+            '''
+            lines.append('%d %.2f %.2f %d %.2e %.2e %.2e %.2e %.3f %.3f' % (shotn,
                                               event['timestamp'],
+                                              shot['sht']['Bt'],
+                                              shot['sht']['Ip'],
                                               cfm_event['data']['nl'] / (cfm_event['data']['nl_profile'][0]['z'] - cfm_event['data']['nl_profile'][-1]['z']) * 1e2,
                                               cfm_event['data']['nl_err'] / (cfm_event['data']['nl_profile'][0]['z'] - cfm_event['data']['nl_profile'][-1]['z']) * 1e2,
                                               cfm_event['data']['n_vol'],
