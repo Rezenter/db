@@ -1,23 +1,22 @@
-import phys_const
 import shtRipper
 from pathlib import Path
 import phys_const as c
 import math
 import json
 
-##to-do:
-# add time/date
-# guess plasma isotope
 
 start_shotn: int = 37000
 start_shotn = 38208
 #start_shotn: int = 40031
-stop_shotn: int = 43876
+#stop_shotn: int = 43876
 #stop_shotn: int = 40035
+stop_shotn: int = 0
+with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
+    stop_shotn = int(f.readline())
+    print('Stop at: ', stop_shotn)
 
-
-#overrite: bool = False
-overrite: bool = True
+overrite: bool = False
+#overrite: bool = True
 
 db_file: str = 'db/index.json'
 
@@ -28,7 +27,9 @@ bad_sht: list[int] = [
     39269,
     39338,
     42412,
-    43198
+    43198,
+    43990,
+    44270
 ]
 
 save_interval: int = 10
@@ -37,8 +38,10 @@ sht_size_threshold: int = 8  # MB
 plasma_current_threshold: float = 50e3  # A
 
 #sht_path = 'd:/data/globus/sht/sht'
-sht_path: str = 'W:/sht'
+#sht_path: str = 'W:/sht'
+sht_path: str = '\\\\172.16.12.127\\Data\\sht'
 sht_ext: str = '.SHT'
+ts_path: Path = Path('//172.16.12.127/Pub/!!!TS_RESULTS/shots/')
 
 def downsample(x: list[float], y: list[float], scale: int) -> (list[float], list[float]):
     index: int = 0
@@ -121,7 +124,22 @@ class Shot:
         self.scan_TS()
         if 'err' not in self.result['TS']:
             self.scan_H_alpha()
+        self.scan_isotope()
+        #print(self.result['plasma isotope'])
 
+    def scan_isotope(self) -> bool:
+        is_D: bool = 'Газонапуск 2 дейтерий' in self.sht or 'Газонапуск 2, внутренний, дейтерий' in self.sht
+        is_H: bool = 'Газонапуск 1 водород' in self.sht or 'Газонапуск 1, верх, водород' in self.sht
+        if is_D and not is_H:
+            self.result['plasma isotope'] = 'D'
+            return True
+
+        if not is_D and is_H:
+            self.result['plasma isotope'] = 'H'
+            return True
+
+        self.result['plasma isotope'] = '???'
+        return False
     def scan_ip(self) -> bool:
         breakdown_threshold: float = 10e3  # A
         flattop_range: float = 0.7  # from maximum
@@ -190,6 +208,7 @@ class Shot:
             return False
 
         self.result.update({
+            'date': self.sht[self.Ip_name]['time'],
             'T_start': ip_x[start_ind],
             'T_stop': ip_x[stop_ind],
             'T_max': ip_x[max_ind],
@@ -335,7 +354,8 @@ class Shot:
         else:
             self.result['TS'] = {
                 'time': pulses,
-                'Upl': Upl
+                'Upl': Upl,
+                'processed': ts_path.joinpath('%05d/%05d_dynamics.csv' % (shotn, shotn)).exists()
             }
             return True
         return False
@@ -360,7 +380,7 @@ class Shot:
             #print(1/ (2*165 * (self.sht[self.Up_name]['x'][1] - self.sht[self.Up_name]['x'][0])))
         step: float = self.sht[self.Up_name]['x'][1] - self.sht[self.Up_name]['x'][0]
         t_prev_ind: int = math.floor(time / step)
-        res = phys_const.interpolate(x_prev=self.sht[self.Up_name]['x'][t_prev_ind], x_tgt=time, x_next= self.sht[self.Up_name]['x'][t_prev_ind + 1],
+        res = c.interpolate(x_prev=self.sht[self.Up_name]['x'][t_prev_ind], x_tgt=time, x_next= self.sht[self.Up_name]['x'][t_prev_ind + 1],
                                      y_prev=self.sht['Upl'][t_prev_ind], y_next=self.sht['Upl'][t_prev_ind + 1])
         return res
 
@@ -459,5 +479,5 @@ print('Code OK.')
       hfc (10 фидер vfc) (инт.3)', 'Ipf3 (6PF3)(инт.17)', 'I efcc (7CC) (инт.6)', 'Icc (4pf2) (инт.24)',
        'Ipf1(2PF1) (инт.26)', 'Ivfc (7vfc) (инт.2)', 'Ihfc (8 HFC) (инт.1)', 'Itf (2TF)(инт.23)',
         'Ics (4CS) (инт.22)', 'D-alpha (на столб)', 'Ток пушки (2 ступень)', 'ДВП внутренний (инт.20)',
-         'SXR 80 mkm', 'Петля на инжекторе', 'Ip новый (Пр1ВК) (инт.16)', 'Ip внутр.(Пр2ВК) (инт.18)']
+         'SXR 80 mkm', 'Петля на инжекторе', 'Ip новый (Пр1ВК) (инт.16)', 'Ip внутр.(Пр2ВК) (инт.18)', 'Газонапуск 2 дейтерий']
 '''
