@@ -6,19 +6,20 @@ import json
 
 
 start_shotn: int = 37000
-start_shotn = 38208
 #start_shotn: int = 40031
 #stop_shotn: int = 43876
-#stop_shotn: int = 40035
 stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
     stop_shotn = int(f.readline())
     print('Stop at: ', stop_shotn)
+#stop_shotn = 44000
+
 
 overrite: bool = False
 #overrite: bool = True
 
-db_file: str = 'db/index.json'
+#db_file: str = 'db/index.json'
+db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
 
 bad_sht: list[int] = [
     38692,
@@ -122,6 +123,7 @@ class Shot:
         self.scan_NBI1()
         self.scan_NBI2()
         self.scan_TS()
+        self.scan_DTS()
         if 'err' not in self.result['TS']:
             self.scan_H_alpha()
         self.scan_isotope()
@@ -368,6 +370,36 @@ class Shot:
                 else:
                     return ind + 1
         return -1
+
+    def scan_DTS(self) -> bool:
+        laser_frequency: int = 100
+        signal_threshold: float = 0.25
+
+        if 'Лазер ДТР' in self.sht:
+            x_data: list = self.sht['Лазер ДТР']['x']
+            y_data: list = self.sht['Лазер ДТР']['y']
+        elif 'Лазер ДДТР' in self.sht:
+            x_data: list = self.sht['Лазер ДДТР']['x']
+            y_data: list = self.sht['Лазер ДДТР']['y']
+        else:
+            self.result['DTS'] = {
+                'err': 'SHT file has no laser signal.'
+            }
+            return False
+
+        DTR_times = []
+        for time, signal in zip(x_data, y_data):
+            if signal > signal_threshold:
+                if len(DTR_times) == 0:
+                    DTR_times.append(round(time, 5))  # seconds to ms
+                elif time > DTR_times[-1] + 1 / laser_frequency * 0.8:
+                    DTR_times.append(round(time, 5))  # seconds to ms
+
+
+        self.result['DTS'] = {
+            'time': DTR_times
+        }
+        return True
 
     def match_Upl(self, time: float) -> float:
         if self.Up_name not in self.sht:
