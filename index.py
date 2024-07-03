@@ -6,6 +6,13 @@ import json
 
 
 start_shotn: int = 37000
+
+#start_shotn: int = 41790
+#start_shotn: int = 43356
+#start_shotn: int = 42893
+
+
+#start_shotn: int = 42777
 #start_shotn: int = 40031
 #stop_shotn: int = 43876
 stop_shotn: int = 0
@@ -15,11 +22,11 @@ with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
 #stop_shotn = 44000
 
 
-overrite: bool = False
-#overrite: bool = True
+#overrite: bool = False
+overrite: bool = True
 
-#db_file: str = 'db/index.json'
-db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
+db_file: str = 'db/index.json'
+#db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
 
 bad_sht: list[int] = [
     38692,
@@ -33,7 +40,7 @@ bad_sht: list[int] = [
     44270
 ]
 
-save_interval: int = 10
+save_interval: int = 20
 sht_size_threshold: int = 8  # MB
 
 plasma_current_threshold: float = 50e3  # A
@@ -99,6 +106,8 @@ class Shot:
     Up_name: str = 'Up (внутреннее 175 петля)'
     D_alpha_42: str = 'D-alfa  хорда R=42 cm'
     D_alpha_50: str = 'D-alfa  хорда R=50 cm'
+    SXR_15: str = 'SXR 15 мкм'
+    SXR_50: str = 'SXR 50 mkm'
 
     def __init__(self, shotn: int):
         self.result = {
@@ -127,6 +136,7 @@ class Shot:
         if 'err' not in self.result['TS']:
             self.scan_H_alpha()
         self.scan_isotope()
+        self.scan_SXR()
         #print(self.result['plasma isotope'])
 
     def scan_isotope(self) -> bool:
@@ -142,6 +152,7 @@ class Shot:
 
         self.result['plasma isotope'] = '???'
         return False
+
     def scan_ip(self) -> bool:
         breakdown_threshold: float = 10e3  # A
         flattop_range: float = 0.7  # from maximum
@@ -363,6 +374,8 @@ class Shot:
         return False
 
     def find_closest_TS(self, time: float) -> int:
+        if 'time' not in self.result['TS']:
+            return -1
         for ind in range(len(self.result['TS']['time']) - 1):
             if self.result['TS']['time'][ind] <= time < self.result['TS']['time'][ind + 1]:
                 if time - self.result['TS']['time'][ind] <= self.result['TS']['time'][ind + 1] - time:
@@ -459,6 +472,86 @@ class Shot:
 
         return True
 
+    def scan_SXR(self) -> bool:
+        if self.SXR_15 not in self.sht:
+            self.result['SXR'] = {
+                'err': 'SHT file has no SXR_15 signal.'
+            }
+            return False
+        if self.SXR_50 not in self.sht:
+            self.result['SXR'] = {
+                'err': 'SHT file has no SXR_50 signal.'
+            }
+            return False
+
+        freq_reduction: int = 1
+        scale: int = 30
+
+        flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
+        flattop_stop_ind = self.result['flattop_stop_ind'] // (freq_reduction * scale)
+
+
+        x, y = downsample(x=self.sht[self.SXR_50]['x'], y=self.sht[self.SXR_50]['y'], scale=scale)
+
+        xx, yy = downsample(x=x, y=y, scale=scale)
+        #for i in range(len(x) - 1):
+        #    print(x[i], y[i], y[i] - y[i + 1])
+        #fuck
+
+        self.result['SXR'] = {
+            'max': max(yy[flattop_start_ind//scale: flattop_stop_ind//scale]) - y[333],
+            'time': []
+        }
+        der_threshold: float = self.result['SXR']['max'] * 0.03
+        i: int = flattop_start_ind
+        while i < flattop_stop_ind - 1:
+            if y[i] - y[i + 1] > der_threshold:
+                highRes_ind = i * freq_reduction * scale
+                #print(self.sht[self.SXR_50]['x'][highRes_ind - scale * 2], self.sht[self.SXR_50]['x'][highRes_ind + scale * 2])
+                max_der: float = 0
+                max_ind: int = highRes_ind
+                der_halfWindow: int = 20
+                for j in range(highRes_ind - scale * 1, highRes_ind + scale * 1):
+                    candidate: float = self.sht[self.SXR_50]['y'][j - der_halfWindow] - \
+                                        self.sht[self.SXR_50]['y'][j + der_halfWindow]
+                    #print(j / 1000, self.sht[self.SXR_50]['y'][j], candidate)
+                    if candidate > max_der:
+                        max_der = candidate
+                        max_ind = j
+                        #print('__________________up')
+                #print('\n\n')
+                las_ind: int = self.find_closest_TS(self.sht[self.SXR_50]['x'][max_ind])
+                amp = (y[i - 5] - y[i + 5])
+                if 1.5 > amp > 0.002 and (len(self.result['SXR']['time']) == 0 or self.sht[self.SXR_50]['x'][max_ind] != self.result['SXR']['time'][-1]['time']):
+                    delay = 999
+                    if las_ind > 0:
+                        delay = self.result['TS']['time'][las_ind] - self.sht[self.SXR_50]['x'][max_ind]
+                    period = 999
+                    if len(self.result['SXR']['time']):
+                        period = self.sht[self.SXR_50]['x'][max_ind] - self.result['SXR']['time'][-1]['time']
+                    if period > 0.4*1e-3:
+                        self.result['SXR']['time'].append({
+                            'time': self.sht[self.SXR_50]['x'][max_ind],
+                            'laser_ind': las_ind,
+                            'las_delay': delay,
+                            'amp': amp,
+                            'period': period
+                        })
+            i += 1
+
+        debug = {
+            #'x': self.sht[self.SXR_50]['x'],
+            #'y': self.sht[self.SXR_50]['y'],
+            'down_x': x,
+            'down_y': y,
+            'der': [y[i] - y[i + 1] for i in range(0, len(y) - 1)],
+            'res': self.result['SXR'],
+            'der_tres': der_threshold
+        }
+        #with open('out/debug.json', 'w') as outfile:
+        #    json.dump(debug, outfile, indent=2)
+        #fuck
+        return False
 
 def save(res):
     with open(db_file, 'w') as file:
