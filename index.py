@@ -10,6 +10,8 @@ start_shotn: int = 37000
 #start_shotn: int = 41790
 #start_shotn: int = 43356
 #start_shotn: int = 42893
+#start_shotn: int = 43112        #fails tests
+
 
 
 #start_shotn: int = 42777
@@ -37,10 +39,11 @@ bad_sht: list[int] = [
     42412,
     43198,
     43990,
-    44270
+    44270,
+    44824
 ]
 
-save_interval: int = 20
+save_interval: int = 50
 sht_size_threshold: int = 8  # MB
 
 plasma_current_threshold: float = 50e3  # A
@@ -384,6 +387,17 @@ class Shot:
                     return ind + 1
         return -1
 
+    def find_closest_TS_t(self, time: float) -> int:
+        if 'time' not in self.result['TS']:
+            return -1
+        for ind in range(len(self.result['TS']['time']) - 1):
+            if self.result['TS']['time'][ind] <= time < self.result['TS']['time'][ind + 1]:
+                if time - self.result['TS']['time'][ind] <= self.result['TS']['time'][ind + 1] - time:
+                    return self.result['TS']['time'][ind]
+                else:
+                    return self.result['TS']['time'][ind + 1]
+        return -1
+
     def scan_DTS(self) -> bool:
         laser_frequency: int = 100
         signal_threshold: float = 0.25
@@ -494,9 +508,16 @@ class Shot:
         x, y = downsample(x=self.sht[self.SXR_50]['x'], y=self.sht[self.SXR_50]['y'], scale=scale)
 
         xx, yy = downsample(x=x, y=y, scale=scale)
-        #for i in range(len(x) - 1):
-        #    print(x[i], y[i], y[i] - y[i + 1])
+        #for i in range(flattop_start_ind//scale, flattop_stop_ind//scale):
+        #    print(xx[i], yy[i])
         #fuck
+
+        if(flattop_stop_ind//scale - flattop_start_ind//scale <=1):
+            self.result['SXR'] = {
+                'err': 'too small flattop'
+            }
+            #print("FUCK!")
+            return False
 
         self.result['SXR'] = {
             'max': max(yy[flattop_start_ind//scale: flattop_stop_ind//scale]) - y[333],
@@ -520,25 +541,25 @@ class Shot:
                         max_ind = j
                         #print('__________________up')
                 #print('\n\n')
-                las_ind: int = self.find_closest_TS(self.sht[self.SXR_50]['x'][max_ind])
+                las_time: int = self.find_closest_TS_t(self.sht[self.SXR_50]['x'][max_ind])
                 amp = (y[i - 5] - y[i + 5])
                 if 1.5 > amp > 0.002 and (len(self.result['SXR']['time']) == 0 or self.sht[self.SXR_50]['x'][max_ind] != self.result['SXR']['time'][-1]['time']):
                     delay = 999
-                    if las_ind > 0:
-                        delay = self.result['TS']['time'][las_ind] - self.sht[self.SXR_50]['x'][max_ind]
+                    if las_time > 0:
+                        delay = las_time - self.sht[self.SXR_50]['x'][max_ind]
                     period = 999
                     if len(self.result['SXR']['time']):
                         period = self.sht[self.SXR_50]['x'][max_ind] - self.result['SXR']['time'][-1]['time']
                     if period > 0.4*1e-3:
                         self.result['SXR']['time'].append({
                             'time': self.sht[self.SXR_50]['x'][max_ind],
-                            'laser_ind': las_ind,
+                            'laser_time': las_time,
                             'las_delay': delay,
                             'amp': amp,
                             'period': period
                         })
             i += 1
-
+        '''
         debug = {
             #'x': self.sht[self.SXR_50]['x'],
             #'y': self.sht[self.SXR_50]['y'],
@@ -548,9 +569,9 @@ class Shot:
             'res': self.result['SXR'],
             'der_tres': der_threshold
         }
-        #with open('out/debug.json', 'w') as outfile:
-        #    json.dump(debug, outfile, indent=2)
-        #fuck
+        with open('out/debug.json', 'w') as outfile:
+            json.dump(debug, outfile, indent=2)
+        fuck'''
         return False
 
 def save(res):

@@ -50,7 +50,7 @@ limit_rinv = {
     'filter': True,
     'min_delay': 0.1*1e-3,
     'max_delay': 0.35*1e-3,
-    'min_amp': 0.1,
+    'min_amp': 0.05,
     'skip_first': 3
 }
 
@@ -206,7 +206,8 @@ for shot_str in db:
         print('RECALC TS %s' % shot_str)
         continue
     print(shot_str, 'OK')
-    for event in ts_data:
+    for las_ind in range(len(ts_data)):
+        event = ts_data[las_ind]
         if shot["T_flattop_start"] * 1000 + 10 < float(event[time_ind]) < shot["T_flattop_stop"] * 1000:
             if 'T_start' in shot['NBI1']:
                 if not (shot['NBI1']["T_start"] * 1000 + 10 < float(event[time_ind]) < shot['NBI1']["T_stop"] * 1000):
@@ -235,19 +236,32 @@ for shot_str in db:
                     break
 
             if limit_rinv['filter']:
-                for ev_ind in range(1 + limit_rinv['skip_first'], len(shot['SXR']['time'])):
-                    if shot['SXR']['time'][ev_ind]['laser_ind'] + 1 != int(event[0]):
+                if las_ind < len(ts_data) - 2:
+
+                    las_pulse_ind = int(event[0]) - 1
+
+                    sxr_ind_1: int = 99999
+                    sxr_ind_2: int = 99999
+                    for sxr_ind in range(1 + limit_rinv['skip_first'], len(shot['SXR']['time'])):
+                        if float(event[1]) - 0.5 <= shot['SXR']['time'][sxr_ind]['laser_time'] * 1000 <= float(event[1]) + 0.5:
+                            sxr_ind_1 = sxr_ind
+                            break
+                    if sxr_ind_1 == 99999:
                         continue
-                    #print(event[0], event[1], ev['laser_ind'], ev['time'])
-                    if (not -limit_rinv['min_delay'] < shot['SXR']['time'][ev_ind]['las_delay'] < limit_rinv['min_delay'] and\
-                            -limit_rinv['max_delay'] < shot['SXR']['time'][ev_ind]['las_delay'] < limit_rinv['max_delay'] and \
-                        not -limit_rinv['min_delay'] < shot['SXR']['time'][ev_ind - 1]['las_delay'] < limit_rinv['min_delay'] and\
-                        -limit_rinv['max_delay'] < shot['SXR']['time'][ev_ind - 1]['las_delay'] < limit_rinv['max_delay'] and \
-                            shot['SXR']['time'][ev_ind]['las_delay'] * shot['SXR']['time'][ev_ind - 1]['las_delay'] < 0):
+                    for sxr_ind in range(1 + limit_rinv['skip_first'], len(shot['SXR']['time'])):
+                        if float(ts_data[las_ind + 1][1]) - 0.5 <= shot['SXR']['time'][sxr_ind]['laser_time'] * 1000 <= float(ts_data[las_ind + 1][1]) + 0.5:
+                            sxr_ind_2 = sxr_ind
+                            break
+                    if sxr_ind_2 == 99999:
+                        continue
+                    if (not -limit_rinv['min_delay'] < shot['SXR']['time'][sxr_ind_1]['las_delay'] < limit_rinv['min_delay'] and \
+                            -limit_rinv['max_delay'] < shot['SXR']['time'][sxr_ind_1]['las_delay'] < limit_rinv['max_delay'] and \
+                            not -limit_rinv['min_delay'] < shot['SXR']['time'][sxr_ind_2]['las_delay'] < limit_rinv['min_delay'] and \
+                            -limit_rinv['max_delay'] < shot['SXR']['time'][sxr_ind_2]['las_delay'] < limit_rinv['max_delay'] and \
+                            shot['SXR']['time'][sxr_ind_1]['las_delay'] * shot['SXR']['time'][sxr_ind_2]['las_delay'] < 0):
 
-                        if shot['SXR']['time'][ev_ind-1]['amp'] < limit_rinv['min_amp'] or shot['SXR']['time'][ev_ind]['amp'] < limit_rinv['min_amp']:
+                        if shot['SXR']['time'][sxr_ind_1]['amp'] < limit_rinv['min_amp'] or shot['SXR']['time'][sxr_ind_2]['amp'] < limit_rinv['min_amp']:
                             continue
-
 
                         final_line: str = out_line
                         final_line += '%s, ' % event[time_ind]
@@ -257,17 +271,23 @@ for shot_str in db:
                         final_line += '%s, ' % event[Weerr_ind]
                         final_line += '%s, ' % event[TMax_ind]
                         final_line += '%s, ' % event[TMaxerr_ind]
+                        final_line += '%f, ' % (shot['SXR']['time'][sxr_ind_1]['time'])
+                        final_line += '%f, ' % (shot['SXR']['time'][sxr_ind_2]['time'])
+                        final_line += '%f, ' % (shot['SXR']['time'][sxr_ind_1]['laser_time'])
+                        final_line += '%f, ' % (shot['SXR']['time'][sxr_ind_2]['laser_time'])
 
-                        final_line += '%2f, ' % (shot['SXR']['time'][ev_ind]['time'] - shot['SXR']['time'][ev_ind-1]['time'])
-                        final_line += '%2f, ' % (shot['SXR']['time'][ev_ind-1]['amp'])
-                        final_line += '%2f, ' % (shot['SXR']['time'][ev_ind]['amp'])
-                        final_line += '%2e, ' % (shot['SXR']['time'][ev_ind-1]['las_delay']*1000)
-                        final_line += '%d, ' % (shot['SXR']['time'][ev_ind-1]['laser_ind'])
-                        final_line += '%2e, ' % (shot['SXR']['time'][ev_ind]['las_delay']*1000)
-                        final_line += '%d\n' % (shot['SXR']['time'][ev_ind]['laser_ind'])
+                        final_line += '%s, ' % (ts_data[las_ind][1].strip())
+                        final_line += '%2e, ' % (shot['SXR']['time'][sxr_ind_1]['las_delay'] * 1000)
+                        final_line += '%2f, ' % (shot['SXR']['time'][sxr_ind_1]['amp'])
+                        final_line += '%2f, ' % (shot['SXR']['time'][sxr_ind_1]['period'] * 1000)
+
+                        final_line += '%s, ' % (ts_data[las_ind + 1][1].strip())
+                        final_line += '%2e, ' % (shot['SXR']['time'][sxr_ind_2]['las_delay'] * 1000)
+                        final_line += '%2f, ' % (shot['SXR']['time'][sxr_ind_2]['amp'])
+                        final_line += '%2f\n' % (shot['SXR']['time'][sxr_ind_2]['period'] * 1000)
 
                         out.append(final_line)
-                    break
+
 
 with open('out/filtered.csv', 'w') as file:
     file.writelines(out)
