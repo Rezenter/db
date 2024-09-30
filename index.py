@@ -5,7 +5,7 @@ import math
 import json
 
 
-start_shotn: int = 37000
+start_shotn: int = 39627
 
 #start_shotn: int = 41790
 #start_shotn: int = 43356
@@ -43,7 +43,7 @@ bad_sht: list[int] = [
     44824
 ]
 
-save_interval: int = 50
+save_interval: int = 1
 sht_size_threshold: int = 8  # MB
 
 plasma_current_threshold: float = 50e3  # A
@@ -110,7 +110,8 @@ class Shot:
     D_alpha_42: str = 'D-alfa  хорда R=42 cm'
     D_alpha_50: str = 'D-alfa  хорда R=50 cm'
     SXR_15: str = 'SXR 15 мкм'
-    SXR_50: str = 'SXR 50 mkm'
+    SXR_50: str = SXR_15
+    #SXR_50: str = 'SXR 50 mkm'
 
     def __init__(self, shotn: int):
         self.result = {

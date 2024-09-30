@@ -70,6 +70,7 @@ for t in req:
 
         for line in ts_file:
             spl = line.split(',')
+            #print(spl[1].strip(), t['time'])
             if t['time'] == spl[1].strip():
                 t['T_max_measured'] = spl[T_max_measured]
                 t['n_max_measured'] = spl[n_max_measured]
@@ -86,7 +87,8 @@ for t in req:
                     t['norm'] = 1
                 break
         else:
-            fuck
+            pass
+            #fuck
     filename: Path = Path(
         '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\%05d\\%05d_T(R).csv' % (t['shotn'], t['shotn']))
     if not filename.exists():
