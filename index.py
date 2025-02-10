@@ -3,47 +3,51 @@ from pathlib import Path
 import phys_const as c
 import math
 import json
+import utils.auxiliary as aux
 
 
-start_shotn: int = 39627
+start_shotn: int = 37000
 
-#start_shotn: int = 41790
-#start_shotn: int = 43356
-#start_shotn: int = 42893
-#start_shotn: int = 43112        #fails tests
+#start_shotn: int = 43041
 
-
-
-#start_shotn: int = 42777
-#start_shotn: int = 40031
-#stop_shotn: int = 43876
 stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
-    stop_shotn = int(f.readline())
+    stop_shotn = int(f.readline()) - 1
     print('Stop at: ', stop_shotn)
-#stop_shotn = 44000
+#stop_shotn = 44930
 
-
+'''
+shot_list = []  #overriding
+with open('in/4Nikita.csv', 'r') as f:
+    line = f.readline()
+    for line in f:
+        s = int(line.split(',')[1])
+        if s not in shot_list:
+            shot_list.append(s)
+'''
 #overrite: bool = False
-overrite: bool = True
+overrite: bool = False
 
-db_file: str = 'db/index.json'
-#db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
+#db_file: str = 'db/index_test.json'
+db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index_new.json'
 
-bad_sht: list[int] = [
+bad_sht: list[int] = []
+'''
+    37964,
     38692,
     38971,
     38981,
     39269,
     39338,
+    42190,
     42412,
     43198,
     43990,
     44270,
     44824
-]
+'''
 
-save_interval: int = 1
+save_interval: int = 1000
 sht_size_threshold: int = 8  # MB
 
 plasma_current_threshold: float = 50e3  # A
@@ -88,9 +92,9 @@ def window_average(y: list[float], half_window: int) -> list[float]:
     return res_y
 
 
-def time_to_ind(time: float) -> int:
+def time_to_ind(time_s: float) -> int:
     step: float = 1e-6
-    return math.floor(time / step)
+    return math.floor(time_s / step)
 
 
 def dump(x, y):
@@ -102,6 +106,7 @@ def dump(x, y):
 class Shot:
     Ip_name: str = 'Ip внутр.(Пр2ВК) (инт.18)'
     Itf_name: str = 'Itf (2TF)(инт.23)'
+    NBI1_U_name: str = 'Emission electrode voltage'
     NBI1_name: str = 'Emission electrode current'
     NBI2_I_name: str = 'Ток пучка новый инжектор'
     NBI2_U_name: str = 'Напряжение пучка новый инжектор'
@@ -110,8 +115,12 @@ class Shot:
     D_alpha_42: str = 'D-alfa  хорда R=42 cm'
     D_alpha_50: str = 'D-alfa  хорда R=50 cm'
     SXR_15: str = 'SXR 15 мкм'
-    SXR_50: str = SXR_15
-    #SXR_50: str = 'SXR 50 mkm'
+    #SXR_50: str = SXR_15
+    SXR_50: str = 'SXR 50 mkm'
+    EFC_N: str = 'EFC N (инт. 27)'
+    EFC_E: str = 'EFC E (инт. 30)'
+    EFC_S: str = 'EFC S (инт. 35)'
+    EFC_W: str = 'EFC W (инт. 32)'
 
     def __init__(self, shotn: int):
         self.result = {
@@ -139,8 +148,11 @@ class Shot:
         self.scan_DTS()
         if 'err' not in self.result['TS']:
             self.scan_H_alpha()
+            self.scan_trapped()
+            #self.scan_Zeff()
         self.scan_isotope()
         self.scan_SXR()
+
         #print(self.result['plasma isotope'])
 
     def scan_isotope(self) -> bool:
@@ -283,10 +295,14 @@ class Shot:
                 break
             y_max = max(y_max, y[i])
         if found:
+            u_ave = 999
+            if self.NBI1_U_name in self.sht:
+                u_ave = sum(self.sht[self.NBI1_U_name]['y'][start_ind: stop_ind])/(stop_ind - start_ind)
             self.result['NBI1'] = {
                 'T_start': x[start_ind],
                 'T_stop': x[stop_ind],
-                'I_max': y_max
+                'I_max': y_max,
+                'U': u_ave
             }
         else:
             self.result['NBI1'] = {
@@ -452,7 +468,7 @@ class Shot:
 
         if self.D_alpha_42 not in self.sht:
             self.result['ELM'] = {
-                'err': 'SHT file has no d_alpha signal.'
+                'err': 'SHT file has no d_alpha 42 signal.'
             }
             return False
 
@@ -485,6 +501,310 @@ class Shot:
                 i += pulse_length
             i += 1
 
+        self.result['TS']['d-alpha'] = {}
+        # for every D-alpha signal in sht
+        signals = [
+            {
+                'k': '42',
+                'v': self.D_alpha_42
+            }, {
+                'k': '50',
+                'v': self.D_alpha_50
+            }, {
+                'k': 'column',
+                'v': 'D-alpha (на столб)'
+            }, {
+                'k': 'lower',
+                'v': 'D-alfa нижний купол'
+            }, {
+                'k': 'upper',
+                'v': 'D-alfa верхний купол'
+            }
+        ]
+        for s in signals:
+            if s['v'] not in self.sht:
+                self.result['TS']['d-alpha'][s['k']] = {
+                    'err': 'SHT file has no signal %s' % s['v']
+                }
+            else:
+                self.result['TS']['d-alpha'][s['k']] = {
+                    'zero': 0,
+                    'val': []
+                }
+                stop_ind = time_to_ind(30e-3)
+                self.result['TS']['d-alpha'][s['k']]['zero'] = sum(self.sht[s['v']]['y'][:stop_ind]) / (stop_ind)
+                for t in self.result['TS']['time']:
+                    half_window: float = 1.5e-3  # ms
+                    start_ind = time_to_ind(t - half_window)
+                    stop_ind = time_to_ind(t + half_window)
+                    ave: float = sum(self.sht[s['v']]['y'][start_ind:stop_ind]) / (stop_ind - start_ind)
+                    self.result['TS']['d-alpha'][s['k']]['val'].append(ave-self.result['TS']['d-alpha'][s['k']]['zero'])
+
+        if self.D_alpha_50 not in self.sht:
+            self.result['ELM2'] = {
+                'err': 'SHT file has no d_alpha 50 signal.'
+            }
+            return False
+
+        der_window = 9
+        half_window: int = der_window // 2
+        der_threshold = 0.005
+        min_tau = 3e-5
+        max_tau = 4e-4
+        signal = []
+
+        for i in range(len(self.sht[self.D_alpha_50]['y'])):
+            signal.append({
+                'x': i * 1e-6,
+                'y': self.sht[self.D_alpha_50]['y'][i],
+                'ave': sum(self.sht[self.D_alpha_50]['y'][i - half_window: i + half_window]) / der_window
+            })
+        for i in range(der_window + 1, len(self.sht[self.D_alpha_50]['y']) - der_window):
+            signal[i]['der'] = (signal[i + half_window]['ave'] - signal[i - half_window]['ave']) / der_window
+            signal[i]['is_der'] = signal[i]['der'] >= der_threshold
+        is_der = False
+        is_peak = False
+        is_min = False
+        der_max = 0
+        der_ind = 0
+        level = 0
+        max_level = -1e30
+        min_level = 1e30
+        self.result['ELM2']: list[float] = []
+        for i in range(der_window + 1, len(self.sht[self.D_alpha_50]['y']) - der_window - 1):
+            if signal[i]['is_der']:
+                is_der = True
+                if signal[i]['der'] > der_max:
+                    der_max = signal[i]['der']
+                    der_ind = i
+                    level = signal[der_ind]['ave']
+                    max_level = signal[der_ind]['ave']
+            elif is_der:
+                is_der = False
+                is_peak = True
+            if is_peak:
+                if signal[i]['ave'] >= level:
+                    max_level = max(max_level, signal[i]['ave'])
+                else:
+                    is_peak = False
+                    is_min = True
+            if is_min:
+                if signal[i]['der'] < 0:
+                    min_level = min(min_level, signal[i]['ave'])
+                else:
+                    is_min = False
+                    der_max = -1e33
+                    if der_ind > 115000 and max_level - min_level > 0:
+                        amp = 0
+                        if max_level != 0:
+                            amp = (max_level - min_level) * 100 / max_level
+                        self.result['ELM2'].append({
+                            'ind': der_ind,
+                            'tau_mks': (i - der_ind),
+                            'is_elm': min_tau <= (i - der_ind) * 1e-6 <= max_tau,
+                            'level': level,
+                            'max': max_level,
+                            'der': signal[der_ind]['der'],
+                            'too_long': (i - der_ind) * 1e-6 >= max_tau - 0.5e-6,
+                            'amp': max_level - min_level,
+                            'amp_%': amp
+                        })
+
+        return True
+
+    def scan_trapped(self) -> bool:
+        '''
+        Kate:
+        delta_efc = [data['EFC S (инт. 35)']['data'][i] - data['EFC N (инт. 27)']['data'][i] for i in
+                 range(len(data['EFC N (инт. 27)']['data']))]
+
+        '''
+        self.result['TS']['trapped'] = {}
+        if self.EFC_N not in self.sht or self.EFC_S not in self.sht:
+            self.result['TS']['trapped']['SN'] = {
+                'err': 'SHT file has no EFC_N or EFC_S signal.'
+            }
+        else:
+            if len(self.sht[self.EFC_N]['y']) != len(self.sht[self.EFC_S]['y']):
+                self.result['TS']['trapped']['SN'] = {
+                    'err': 'SHT file has bad EFC_N or EFC_S signal.'
+                }
+            diff = [self.sht[self.EFC_S]['y'][i] - self.sht[self.EFC_N]['y'][i] for i in range(len(self.sht[self.EFC_N]['y']))]
+            self.result['TS']['trapped']['SN'] = []
+            for t in self.result['TS']['time']:
+                half_window: float = 0.5e-3 #ms
+                start_ind = time_to_ind(t - half_window)
+                stop_ind = time_to_ind(t + half_window)
+                ave: float = sum(diff[start_ind:stop_ind]) / (stop_ind - start_ind)
+                self.result['TS']['trapped']['SN'].append(ave)
+
+        if self.EFC_W not in self.sht or self.EFC_E not in self.sht:
+            self.result['TS']['trapped']['WE'] = {
+                'err': 'SHT file has no EFC_W or EFC_E signal.'
+            }
+        else:
+            if len(self.sht[self.EFC_W]['y']) != len(self.sht[self.EFC_E]['y']):
+                self.result['TS']['trapped']['WE'] = {
+                    'err': 'SHT file has bad EFC_W or EFC_E signal.'
+                }
+            diff = [self.sht[self.EFC_W]['y'][i] - self.sht[self.EFC_E]['y'][i] for i in range(len(self.sht[self.EFC_W]['y']))]
+            self.result['TS']['trapped']['WE'] = []
+            for t in self.result['TS']['time']:
+                half_window: float = 0.5e-3 #ms
+                start_ind = time_to_ind(t - half_window)
+                stop_ind = time_to_ind(t + half_window)
+                ave: float = sum(diff[start_ind:stop_ind]) / (stop_ind - start_ind)
+                self.result['TS']['trapped']['WE'].append(ave)
+        return True
+
+    def scan_Zeff(self) -> bool:
+        self.result['TS']['zeff'] = {}
+
+        zeff_path: Path = Path('\\\\172.16.12.127\\Pub\\Tuxmeneva\\Zeff\\%05d_Zeff.txt' % self.result['shotn'])
+        if(zeff_path.exists()):
+            self.result['TS']['zeff']['Kate'] = []
+            data = {}
+            with open(zeff_path, 'r') as f:
+                for line in f:
+                    if len(line) <= 2:
+                        continue
+                    spl = line.split('\t')
+                    if len(spl) < 4:
+                        spl = line.split(' ')
+                    if len(spl) == 5:
+                        data[float(spl[1])] = float(spl[3])
+                    elif len(spl) == 4:
+                        data[float(spl[1])] = float(spl[2])
+                    else:
+                        fuck
+            for ts_i in range(len(self.result['TS']['time'])):
+                ts_t = self.result['TS']['time'][ts_i]
+                for i in data:
+                    if ts_t - 0.001 <= i <= ts_t + 0.001:
+                        self.result['TS']['zeff']['Kate'].append(data[i])
+                        break
+                else:
+                    self.result['TS']['zeff']['Kate'].append(0)
+        else:
+            self.result['TS']['zeff']['Kate'] = {
+                'err': 'no Zeff data file found.'
+            }
+
+        ch_ind = 1
+        poly_ind = -1
+        path: Path = ts_path.joinpath(Path('%05d\\result.json' % self.result['shotn']))
+        path2: Path = ts_path.joinpath(Path('%05d\\signal.json' % self.result['shotn']))
+        if path.exists() and path2.exists():
+            self.result['TS']['zeff']['TS'] = []
+            ts_res = None
+            with open(path, 'r') as f:
+                ts_res = json.load(f)
+            with open(path2, 'r') as f:
+                ts_res['sig'] = json.load(f)['data']
+            with open('\\\\172.16.12.130\\d\\data\\db\\calibration\\abs\\processed\\%s.json' % ts_res['absolute_name'], 'r') as f:
+                ts_res['A'] = json.load(f)['A']
+
+            #poly_los_ind = 9
+            poly_los_ind = 0
+            r_min = 999
+            for i, poly in enumerate(ts_res['config']['poly']):
+                R = ts_res['config']['fibers'][ts_res['config']['poly'][i]['fiber']]['R']
+                if abs(R - 404) < r_min:
+                    r_min = abs(R - 404)
+                    poly_los_ind = i
+
+            filters = aux.Filters(ts_res['config']['poly'][poly_los_ind]['filter_set'])
+            apd = aux.APD(ts_res['config']['poly'][poly_los_ind]['detectors'])
+            dh = ts_res['config']['sockets'][
+                     ts_res['config']['fibers'][ts_res['config']['poly'][poly_los_ind]['fiber']]['lens_socket_ind']][
+                     'image_h'] * 1e-3
+            # cos_alpha = 0.9
+            # L = 16.8 * 1e-3 * cos_alpha #use poloidal_length instead
+            L = ts_res['config']['fibers'][ts_res['config']['poly'][poly_los_ind]['fiber']]['poloidal_length'] * 1e-3
+
+
+            for ev_i, ev in enumerate(ts_res['events']):
+                if 'error' in ev and ev['error'] != '' and ev['error'] is not None:
+                    self.result['TS']['zeff']['TS'].append(0)
+                elif not self.result['T_start'] <= ev['timestamp']*1e-3 <= self.result['T_stop']:
+                    self.result['TS']['zeff']['TS'].append(0)
+                else:
+                    los_prof = []
+                    for i, poly in enumerate(ev['T_e']):
+                        if not ('error' in poly and poly['error'] != '' and poly['error'] is not None):
+                            R = ts_res['config']['fibers'][ts_res['config']['poly'][i]['fiber']]['R']
+                            if R < 400:
+                                continue
+                            los_prof.append({
+                                'L': (math.sqrt(866**2 - 391.7**2) - math.sqrt(R**2-391.7**2))*1e-3,
+                                'n_e': poly['n'],
+                                't_e': poly['T']
+                            })
+                    if len(los_prof) == 0:
+                        continue
+                    los_prof.sort(key=lambda x: x['L'])
+                    los_prof.append({
+                        'L': (math.sqrt(866 ** 2 - 391.7 ** 2) - math.sqrt(391.7 ** 2 - 391.7 ** 2)) * 1e-3,
+                        'n_e': los_prof[-1]['n_e'],
+                        't_e': los_prof[-1]['t_e']
+                    })
+
+                    #math.pow(pre_std * matching_gain * 4 / sp_ch['fast_gain'], 2) * 6715 * 0.0625 - 1.14e4 * 0.0625
+                    n_ts_arr = [math.sqrt(math.pow(ts_res['sig'][ev_i]['poly']['%d' % poly_los_ind]['ch'][ch]['pre_std'] * ts_res['config']['preamp']['matchingFastGain'] * 4 / ts_res['config']['poly'][poly_los_ind]['channels'][ch]['fast_gain'], 2) * 6715 * 0.0625 - 1.14e4 * 0.0625) for ch in range(len(filters.trans))]
+                    #n_ts = math.sqrt(math.pow(ts_res['sig'][ev_i]['poly']['%d' % poly_los_ind]['ch'][1]['pre_std'] * ts_res['config']['preamp']['matchingFastGain'] * 4 / ts_res['config']['poly'][poly_los_ind]['channels'][0]['fast_gain'], 2) * 6715 * 0.0625 - 1.14e4 * 0.0625)
+                    #n_brem: float = 0
+                    n_brem_ch = [0.0 for ch in filters.trans]
+
+                    #dt = 34e-9 #s
+                    dt = ts_res['config']['common']['integrationTime'] * 1e-9 #s
+                    A_OH = 0.4 * 4
+                    #dh = 4.5e-3 #use config instead
+
+                    dOmega = 0.0175
+                    T = 0.8 * 0.3 * 0.7
+                    T_polar = 0.5
+
+                    const = A_OH * dt * dh * L * T * dOmega * T_polar
+                    wl_step: float = 0.1 * 1e-9
+                    for ind in range(len(los_prof) - 1):
+                        wl: float = 1055*1e-9
+
+                        Te = (los_prof[ind]['t_e'] + los_prof[ind + 1]['t_e']) * 0.5
+                        ne = (los_prof[ind]['n_e'] + los_prof[ind + 1]['n_e']) * 0.5
+                        step = los_prof[ind + 1]['L'] - los_prof[ind]['L']
+                        while wl > 1025*1e-9:
+                            ae = 1
+                            filter = filters.transmission(ch=1, wl_m=wl) * ae * apd.qe(wl_m=wl)
+                            # if calibration version == 2:
+                            # A kate = A*pi/(3*Lscat*Omega)
+                            #else =  A*pi*1.864E-19/(3*Lscat*Omega)  #1.864E-19=h*c/lambda_0
+                            #print('fuck up')
+
+                            #gff = 0.55 * math.log(0.0018 * Te * wl * 1e9)
+                            #exp_milt = math.exp(-1240 / (Te * wl * 1e9))
+                            #n_brem += 0.763 * 10**(-20) * ne**2 * Zeff * gff * exp_milt / (Te**0.5 * wl)
+
+                            constant = (const * step * 0.763 * 1e-20 * ne ** 2 *
+                                       0.55 * math.log(0.0018 * Te * wl * 1e9) *
+                                       math.exp(-1240 / (Te * wl * 1e9)) / (Te ** 0.5 * wl * 1e9)) *2 * wl_step * 1e9
+                            for ch_ind in range(len(filters.trans)):
+                                n_brem_ch[ch_ind] += constant * filters.transmission(ch=ch_ind+1, wl_m=wl) * ae * apd.qe(wl_m=wl)
+
+                            wl -= wl_step
+                    #n_brem *= 2 * wl_step * 1e9  # half los integration * d(wl)
+                    res = []
+                    for ch_ind in range(len(filters.trans)):
+                        if n_brem_ch[ch_ind] == 0:
+                            res.append(0)
+                        else:
+                            res.append(n_ts_arr[ch_ind] / n_brem_ch[ch_ind])
+                    self.result['TS']['zeff']['TS'].append(res)
+                    #self.result['TS']['zeff']['TS'].append(n_ts / n_brem)
+                    #print(n_ts, n_brem)
+        else:
+            self.result['TS']['zeff']['TS'] = {
+                'err': 'no TS json data file found.'
+            }
         return True
 
     def scan_SXR(self) -> bool:
@@ -577,7 +897,7 @@ class Shot:
 
 def save(res):
     with open(db_file, 'w') as file:
-        json.dump(res, file, indent=2)
+        json.dump(res, file, separators=(',', ':'))
         print('\nSAVED\n')
 
 
@@ -591,6 +911,7 @@ if not overrite:
 
 current_ind = 0
 for shotn in range(start_shotn, stop_shotn + 1):
+#for shotn in shot_list:
     if shotn in bad_sht:
         res[shotn] = {
             'shotn': shotn,

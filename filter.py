@@ -24,21 +24,23 @@ request_NBI2 = {
     'filter': False,
     'is present': True,
     'duration_min': 0,
-    'duration_max': 300
+    'duration_max': 300,
+    'U_min': 0,
+    'U_max': 100
 }
 
 limit_Bt = {
     'filter': False,
-    'min': 0.75,
-    'max': 0.85
+    'min': 0.8,
+    'max': 0.83
 }
 limit_Ip = {
     'filter': False,
-    'min': 275,
-    'max': 325
+    'min': 295,
+    'max': 305
 }
 limit_flattop = {
-    'filter': True,
+    'filter': False,
     'min': 20,
     'max': 300
 }
@@ -47,17 +49,28 @@ limit_SXR = {
     'max_delay': 1.5*1e-3,
 }
 limit_rinv = {
-    'filter': True,
+    'filter': False,
     'min_delay': 0.1*1e-3,
     'max_delay': 0.35*1e-3,
     'min_amp': 0.05,
     'skip_first': 3
 }
+limit_maxTe = {
+    'filter': False,
+    'min': 1600,
+    'max': 2000
+}
+limit_nl = {
+    'filter': False,
+    'min': 5.5e19,
+    'max': 5.5e19
+}
 
 baddies: list[int] = [41845]
 
-with open('db/index.json', 'r') as file:
+with open('\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json', 'r') as file:
     db = json.load(file)
+
 
 out: list[str] = ['shotn, Ip, Bt, flattop duration, time, <n>42, err, we, err, T0, err\n']
 elmy_out: list[str] = []
@@ -82,6 +95,8 @@ for shot_str in db:
     if request_NBI2['filter']:
         request_NBI2['pass_filter'] = False
         if 'err' not in shot['NBI2']:
+            if 'U_max' not in shot['NBI2'] or not request_NBI2['U_min'] <= shot['NBI2']['U_max'] <= request_NBI2['U_max']:
+                continue
             if request_NBI2['duration_min'] <= (shot['NBI2']['T_stop'] - shot['NBI2']['T_start']) * 1000 <= \
                     request_NBI2['duration_max']:
                 request_NBI2['pass_filter'] = True
@@ -138,14 +153,17 @@ for shot_str in db:
     Weerr_ind: int = -999
     TMax_ind: int = -999
     TMaxerr_ind: int = -999
+    T_max: float = -999
+    nl_flattop_min: float = 1e99
+    nl_flattop_max: float = -1e99
     with open(shot_path, 'r') as file:
         header = [v.strip() for v in file.readline().split(',')]
         if len(header) == 1:
-            print('RECALC TS %s' % shot_str)
+            #print('RECALC TS %s' % shot_str)
             continue
         time_ind = header.index('time')
         if '<n>42' not in header:
-            print('RECALC TS %s' % shot_str)
+            #print('RECALC TS %s' % shot_str)
             continue
         nl42_ind = header.index('<n>42')
         if '<n>42_err' not in header:
@@ -158,6 +176,10 @@ for shot_str in db:
         for line in file:
             spl = [v.strip() for v in line.split(',')]
             ts_data.append(spl)
+            if shot['T_flattop_start'] <= float(spl[time_ind])*0.001 <= shot['T_flattop_stop']:
+                if spl[nl42_ind] != '--' and spl[nl42_ind] != '':
+                    nl_flattop_min = min(nl_flattop_min, float(spl[nl42_ind]))
+                    nl_flattop_max = max(nl_flattop_max, float(spl[nl42_ind]))
 
         if 'T_max_measured' in header:
             TMax_ind = header.index('T_max_measured')
@@ -165,7 +187,7 @@ for shot_str in db:
         else:
             tt_path: Path = ts_path.joinpath('%s/%s_T(t).csv' % (shot_str, shot_str))
             if not tt_path.exists():
-                print('RECALC TS %s' % shot_str)
+                #print('RECALC TS %s' % shot_str)
                 continue
             TMax_ind = len(header)
             TMaxerr_ind = len(header) + 1
@@ -202,10 +224,49 @@ for shot_str in db:
                         ts_data[event_ind].append('--')
                         ts_data[event_ind].append('--')
                     event_ind += 1
+
     if len(ts_data) == 0 or len(ts_data[0]) < 7:
-        print('RECALC TS %s' % shot_str)
+        #print('RECALC TS %s' % shot_str)
         continue
-    print(shot_str, 'OK')
+    #print(shot_str, 'OK')
+
+    if limit_maxTe['filter']:
+        ok: bool = False
+        if not Path(ts_path.joinpath('%s/result.json' % shot_str)).exists():
+            continue
+        with open(ts_path.joinpath('%s/result.json' % shot_str), 'r') as ts_file:
+            ts_res = json.load(ts_file)
+            shot['TS_res'] = ts_res
+            for ev in ts_res['events']:
+                if not 'timestamp' in ev:
+                    continue
+                if not shot['T_start'] <= ev['timestamp']*0.001 <= shot['T_flattop_stop']:
+                    continue
+                if 'T_e' in ev:
+                    for p in ev['T_e']:
+                        if 'T' not in p:
+                            continue
+                        if p['error'] is not None:
+                            continue
+                        if 'hidden' in p and p['hidden']:
+                            continue
+
+                        if limit_maxTe['min'] <= p['T'] <= limit_maxTe['max']:
+                            #print(ev[TMax_ind])
+                            if p['T'] > 1900:
+                                print('wtf')
+
+                            ok = True
+                            T_max = max(p['T'], T_max)
+        if not ok:
+            continue
+
+    if limit_nl['filter']:
+        if limit_nl['min'] > nl_flattop_max or limit_nl['max'] < nl_flattop_min:
+            continue
+
+    #print(shot['shotn'], 1, shot['Ip'], shot['Bt'], int('err' not in shot['NBI1']), int('err' not in shot['NBI2']), T_max, shot['TS_res']['spectral_name'])
+    print(shot['shotn'], 1, shot['Ip'], shot['Bt'], int('err' not in shot['NBI1']), int('err' not in shot['NBI2']), int('err' not in shot['NBI1']) + int('err' not in shot['NBI2']),  nl_flattop_min, nl_flattop_max)
     for las_ind in range(len(ts_data)):
         event = ts_data[las_ind]
         if shot["T_flattop_start"] * 1000 + 10 < float(event[time_ind]) < shot["T_flattop_stop"] * 1000:
