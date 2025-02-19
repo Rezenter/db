@@ -1,18 +1,22 @@
 import shtRipper
 import json
+import msgpack
 
 shotn = 44194
 shotn = 42667
 shotn = 45972
 shotn = 45514
+shotn = 42764
+shotn = 44199
 signal_name = 'D-alfa  хорда R=50 cm'
 
-der_window = 9
+der_window = 300
 half_window: int = der_window // 2
 
-der_threshold = 0.005
-min_tau = 3e-5
-max_tau = 4e-4
+der_threshold = 3e-6
+
+min_tau = 50
+max_tau = 500
 
 print(shotn, '\n\n')
 shot = None
@@ -31,62 +35,38 @@ for i in range(len(sht)):
         'ave': sum(sht[i - half_window: i + half_window]) / der_window
     })
 for i in range(der_window + 1, len(sht) - der_window):
-    signal[i]['der'] = (signal[i + half_window]['ave'] - signal[i - half_window]['ave']) / der_window
-    signal[i]['is_der'] = signal[i]['der'] >= der_threshold
-is_der = False
-is_peak = False
-is_min = False
-der_max = 0
-der_ind = 0
-level = 0
-max_level = -1e30
-min_level = 1e30
-candidates = []
-for i in range(der_window + 1, len(sht) - der_window - 1):
-    if signal[i]['is_der']:
-        is_der = True
-        if signal[i]['der'] > der_max:
-            der_max = signal[i]['der']
-            der_ind = i
-            level = signal[der_ind]['ave']
-            max_level = signal[der_ind]['ave']
-    elif is_der:
-        is_der = False
-        is_peak = True
-    if is_peak:
-        if signal[i]['ave'] >= level:
-            max_level = max(max_level, signal[i]['ave'])
-        else:
-            is_peak = False
-            is_min = True
-    if is_min:
-        if signal[i]['der'] < 0:
-            min_level = min(min_level, signal[i]['ave'])
-        else:
-            is_min = False
-            der_max = -1e33
-            if der_ind > 115000 and max_level - min_level > 0:
-                candidates.append({
-                    'ind': der_ind,
-                    'tau_mks': (i - der_ind),
-                    'is_elm': min_tau <= (i - der_ind) * 1e-6 <= max_tau,
-                    'level': level,
-                    'max': max_level,
-                    'der': signal[der_ind]['der'],
-                    'too_long': (i - der_ind) * 1e-6 >= max_tau - 0.5e-6,
-                    'amp': max_level - min_level,
-                    'amp_%': (max_level - min_level) * 100 / max_level
-                })
+    signal[i]['der'] = (signal[i + 1]['ave'] - signal[i - 1]['ave']) / der_window
+for i in range(der_window*2 + 1, len(sht) - der_window*2):
+    signal[i]['der_ave'] = sum([signal[v]['der'] for v in range(i - half_window, i + half_window)]) / der_window
 
+candidates = []
+i = 115000
+while i < len(sht) - der_window * 3 - max_tau:
+    if signal[i]['der_ave'] >= der_threshold:
+        max_ind = i
+        min_ind = i
+        for j in range(i+min_tau, i + max_tau):
+            if signal[j]['der_ave'] > signal[max_ind]['der_ave']:
+                max_ind = j
+            elif signal[j]['der_ave'] < signal[min_ind]['der_ave']:
+                min_ind = j
+        if signal[min_ind]['der_ave'] < -der_threshold:
+            candidates.append({
+                't': max_ind*1e-6,
+                'tau': (min_ind - max_ind),
+                'der': signal[max_ind]['der_ave']
+            })
+            i += max_tau
+    i += min_tau
 
 with open('out/elm_test.csv', 'w') as file:
     for i in range(len(sht)):
         if not shot['T_start'] < i * 1e-6 < shot['T_stop']:
             continue
-        line = '%.5e, %.4e, %.4e, %.4e\n' % (signal[i]['x'], signal[i]['y'], signal[i]['ave'], signal[i]['der'])
+        line = '%.5e, %.4e, %.4e, %.4e, %.4e\n' % (signal[i]['x'], signal[i]['y'], signal[i]['ave'], signal[i]['der'], signal[i]['der_ave'])
         file.write(line)
 
 for elm in candidates:
-    print(elm['ind'] * 1e-6, elm['tau_mks'], int(elm['is_elm']), elm['level'], elm['max'], elm['der'], int(elm['too_long']), elm['amp'], elm['amp_%'])
+    print(elm['t'], elm['tau'], elm['der'])
 
 print('\n\nOK')
