@@ -5,16 +5,23 @@ import math
 import json
 import utils.auxiliary as aux
 
-
 start_shotn: int = 37000
 
-#start_shotn: int = 43041
+#start_shotn: int = 41790
+#start_shotn: int = 43356
+#start_shotn: int = 42893
+#start_shotn: int = 43112        #fails tests
 
+
+
+#start_shotn: int = 42777
+#start_shotn: int = 40031
+#stop_shotn: int = 43876
 stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
     stop_shotn = int(f.readline()) - 1
     print('Stop at: ', stop_shotn)
-#stop_shotn = 44930
+#stop_shotn = 44000
 
 '''
 shot_list = []  #overriding
@@ -29,7 +36,7 @@ with open('in/4Nikita.csv', 'r') as f:
 overrite: bool = False
 
 #db_file: str = 'db/index_test.json'
-db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index_new.json'
+db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
 
 bad_sht: list[int] = []
 '''
@@ -39,7 +46,6 @@ bad_sht: list[int] = []
     38981,
     39269,
     39338,
-    42190,
     42412,
     43198,
     43990,
@@ -54,7 +60,8 @@ plasma_current_threshold: float = 50e3  # A
 
 #sht_path = 'd:/data/globus/sht/sht'
 #sht_path: str = 'W:/sht'
-sht_path: str = '\\\\172.16.12.127\\Data\\sht'
+sht_path_1: str = '\\\\172.16.12.127\\Data\\sht'
+sht_path_2: str = '\\\\172.16.12.28\\Data\\sht'
 sht_ext: str = '.SHT'
 ts_path: Path = Path('//172.16.12.127/Pub/!!!TS_RESULTS/shots/')
 
@@ -126,10 +133,12 @@ class Shot:
         self.result = {
             'shotn': shotn
         }
-        filename = Path('%s%05d%s' % (sht_path, shotn, sht_ext))
+        filename = Path('%s%05d%s' % (sht_path_1, shotn, sht_ext))
         if not filename.exists():
-            self.result['err'] = 'shot %d does not exist\n' % shotn
-            return
+            filename = Path('%s%05d%s' % (sht_path_2, shotn, sht_ext))
+            if not filename.exists():
+                self.result['err'] = 'shot %d does not exist\n' % shotn
+                return
         if filename.stat().st_size < sht_size_threshold * 1024 * 1024:
             self.result['err'] = 'shot %d has suspicious file size\n' % shotn
             return
@@ -911,7 +920,6 @@ if not overrite:
 
 current_ind = 0
 for shotn in range(start_shotn, stop_shotn + 1):
-#for shotn in shot_list:
     if shotn in bad_sht:
         res[shotn] = {
             'shotn': shotn,
