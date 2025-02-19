@@ -4,24 +4,17 @@ import phys_const as c
 import math
 import json
 import utils.auxiliary as aux
+import msgpack
 
 start_shotn: int = 37000
 
-#start_shotn: int = 41790
-#start_shotn: int = 43356
-#start_shotn: int = 42893
-#start_shotn: int = 43112        #fails tests
+#start_shotn: int = 43041
 
-
-
-#start_shotn: int = 42777
-#start_shotn: int = 40031
-#stop_shotn: int = 43876
 stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
     stop_shotn = int(f.readline()) - 1
     print('Stop at: ', stop_shotn)
-#stop_shotn = 44000
+#stop_shotn = 44930
 
 '''
 shot_list = []  #overriding
@@ -37,21 +30,9 @@ overrite: bool = False
 
 #db_file: str = 'db/index_test.json'
 db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
+db_file_bin: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.msgpk'
 
 bad_sht: list[int] = []
-'''
-    37964,
-    38692,
-    38971,
-    38981,
-    39269,
-    39338,
-    42412,
-    43198,
-    43990,
-    44270,
-    44824
-'''
 
 save_interval: int = 1000
 sht_size_threshold: int = 8  # MB
@@ -555,70 +536,41 @@ class Shot:
             }
             return False
 
-        der_window = 9
+        der_window = 300
         half_window: int = der_window // 2
-        der_threshold = 0.005
-        min_tau = 3e-5
-        max_tau = 4e-4
+        der_threshold = 3e-6
+        min_tau = 50
+        max_tau = 500
         signal = []
 
         for i in range(len(self.sht[self.D_alpha_50]['y'])):
             signal.append({
-                'x': i * 1e-6,
-                'y': self.sht[self.D_alpha_50]['y'][i],
                 'ave': sum(self.sht[self.D_alpha_50]['y'][i - half_window: i + half_window]) / der_window
             })
         for i in range(der_window + 1, len(self.sht[self.D_alpha_50]['y']) - der_window):
-            signal[i]['der'] = (signal[i + half_window]['ave'] - signal[i - half_window]['ave']) / der_window
-            signal[i]['is_der'] = signal[i]['der'] >= der_threshold
-        is_der = False
-        is_peak = False
-        is_min = False
-        der_max = 0
-        der_ind = 0
-        level = 0
-        max_level = -1e30
-        min_level = 1e30
-        self.result['ELM2']: list[float] = []
-        for i in range(der_window + 1, len(self.sht[self.D_alpha_50]['y']) - der_window - 1):
-            if signal[i]['is_der']:
-                is_der = True
-                if signal[i]['der'] > der_max:
-                    der_max = signal[i]['der']
-                    der_ind = i
-                    level = signal[der_ind]['ave']
-                    max_level = signal[der_ind]['ave']
-            elif is_der:
-                is_der = False
-                is_peak = True
-            if is_peak:
-                if signal[i]['ave'] >= level:
-                    max_level = max(max_level, signal[i]['ave'])
-                else:
-                    is_peak = False
-                    is_min = True
-            if is_min:
-                if signal[i]['der'] < 0:
-                    min_level = min(min_level, signal[i]['ave'])
-                else:
-                    is_min = False
-                    der_max = -1e33
-                    if der_ind > 115000 and max_level - min_level > 0:
-                        amp = 0
-                        if max_level != 0:
-                            amp = (max_level - min_level) * 100 / max_level
-                        self.result['ELM2'].append({
-                            'ind': der_ind,
-                            'tau_mks': (i - der_ind),
-                            'is_elm': min_tau <= (i - der_ind) * 1e-6 <= max_tau,
-                            'level': level,
-                            'max': max_level,
-                            'der': signal[der_ind]['der'],
-                            'too_long': (i - der_ind) * 1e-6 >= max_tau - 0.5e-6,
-                            'amp': max_level - min_level,
-                            'amp_%': amp
-                        })
+            signal[i]['der'] = (signal[i + 1]['ave'] - signal[i - 1]['ave']) / der_window
+        for i in range(der_window * 2 + 1, len(self.sht[self.D_alpha_50]['y']) - der_window * 2):
+            signal[i]['der_ave'] = sum([signal[v]['der'] for v in range(i - half_window, i + half_window)]) / der_window
 
+        self.result['ELM2']: list[float] = []
+        i = 115000
+        while i < len(self.sht[self.D_alpha_50]['y']) - der_window * 3 - max_tau:
+            if signal[i]['der_ave'] >= der_threshold:
+                max_ind = i
+                min_ind = i
+                for j in range(i + min_tau, i + max_tau):
+                    if signal[j]['der_ave'] > signal[max_ind]['der_ave']:
+                        max_ind = j
+                    elif signal[j]['der_ave'] < signal[min_ind]['der_ave']:
+                        min_ind = j
+                if signal[min_ind]['der_ave'] < -der_threshold:
+                    self.result['ELM2'].append({
+                        't': max_ind * 1e-6,
+                        'tau': (min_ind - max_ind),
+                        'der': signal[max_ind]['der_ave']
+                    })
+                    i += max_tau
+            i += min_tau
         return True
 
     def scan_trapped(self) -> bool:
@@ -857,6 +809,7 @@ class Shot:
         i: int = flattop_start_ind
         while i < flattop_stop_ind - 1:
             if y[i] - y[i + 1] > der_threshold:
+
                 highRes_ind = i * freq_reduction * scale
                 #print(self.sht[self.SXR_50]['x'][highRes_ind - scale * 2], self.sht[self.SXR_50]['x'][highRes_ind + scale * 2])
                 max_der: float = 0
@@ -870,10 +823,9 @@ class Shot:
                         max_der = candidate
                         max_ind = j
                         #print('__________________up')
-                #print('\n\n')
                 las_time: int = self.find_closest_TS_t(self.sht[self.SXR_50]['x'][max_ind])
                 amp = (y[i - 5] - y[i + 5])
-                if 1.5 > amp > 0.002 and (len(self.result['SXR']['time']) == 0 or self.sht[self.SXR_50]['x'][max_ind] != self.result['SXR']['time'][-1]['time']):
+                if amp > 0.002 and (len(self.result['SXR']['time']) == 0 or self.sht[self.SXR_50]['x'][max_ind] != self.result['SXR']['time'][-1]['time']):
                     delay = 999
                     if las_time > 0:
                         delay = las_time - self.sht[self.SXR_50]['x'][max_ind]
@@ -907,7 +859,9 @@ class Shot:
 def save(res):
     with open(db_file, 'w') as file:
         json.dump(res, file, separators=(',', ':'))
-        print('\nSAVED\n')
+    with open(db_file_bin, 'wb') as file:
+        msgpack.dump(res, file)
+    print('\nSAVED\n')
 
 
 res = {}
