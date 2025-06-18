@@ -7,14 +7,18 @@ import utils.auxiliary as aux
 import msgpack
 
 start_shotn: int = 37000
+#start_shotn: int = 37000
 
-#start_shotn: int = 43041
+# calc inner- outer- spacings between LCFS and walls, Rsep
+# calc Ip using both signals. Trust second for >45000
+
+#start_shotn: int = 42777
 
 stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
     stop_shotn = int(f.readline()) - 1
     print('Stop at: ', stop_shotn)
-#stop_shotn = 44930
+stop_shotn = 46128
 
 '''
 shot_list = []  #overriding
@@ -93,6 +97,8 @@ def dump(x, y):
 
 class Shot:
     Ip_name: str = 'Ip внутр.(Пр2ВК) (инт.18)'
+    Ip_name_2: str = 'Ip новый (Пр1ВК) (инт.16)'
+    Ip_shotn_threshold: int = 45000
     Itf_name: str = 'Itf (2TF)(инт.23)'
     NBI1_U_name: str = 'Emission electrode voltage'
     NBI1_name: str = 'Emission electrode current'
@@ -159,17 +165,22 @@ class Shot:
         self.result['plasma isotope'] = '???'
         return False
 
-    def scan_ip(self) -> bool:
+    def scan_Ip_name(self, name: str):
         breakdown_threshold: float = 10e3  # A
         flattop_range: float = 0.7  # from maximum
+
+        res = {
+            'ok': False
+        }
 
         start_ind: int = 0
         stop_ind: int = 0
 
-        if self.Ip_name not in self.sht:
-            self.result['err'] = 'SHT file has no plasma current'
-            return False
-        ip_x, ip_y = downsample(x=self.sht[self.Ip_name]['x'], y=window_average(self.sht[self.Ip_name]['y'], 1500), scale=100)
+        if name not in self.sht:
+            res['err'] = 'SHT file has no plasma current'
+            return res
+        ip_x, ip_y = downsample(x=self.sht[name]['x'], y=window_average(self.sht[name]['y'], 1500),
+                                scale=100)
 
         max_ind: int = 0
         plasma_found: bool = False
@@ -187,8 +198,9 @@ class Shot:
                     break
 
         if not plasma_found:
-            self.result['err'] = 'Plasma current %d does not reach threshold %d.' % (ip_y[max_ind], plasma_current_threshold)
-            return False
+            res['err'] = 'Plasma current %d does not reach threshold %d.' % (
+            ip_y[max_ind], plasma_current_threshold)
+            return res
 
         flat_start_ind: int = 0
         flat_stop_ind: int = 0
@@ -223,11 +235,10 @@ class Shot:
                 break
 
         if ip == 0.0:
-            self.result['err'] = 'No flattop detected'
-            return False
+            res['err'] = 'No flattop detected'
+            return res
 
-        self.result.update({
-            'date': self.sht[self.Ip_name]['time'],
+        res.update({
             'T_start': ip_x[start_ind],
             'T_stop': ip_x[stop_ind],
             'T_max': ip_x[max_ind],
@@ -239,6 +250,47 @@ class Shot:
             'flattop_stop_ind': time_to_ind(ip_x[flat_stop_ind]),
             'T_start_index': time_to_ind(ip_x[start_ind]),
             'T_stop_index': time_to_ind(ip_x[stop_ind]),
+            'used_Ip': name
+        })
+        return res
+
+    def scan_ip(self) -> bool:
+        self.result['IpOld'] = self.scan_Ip_name(self.Ip_name)
+        self.result['IpNew'] = self.scan_Ip_name(self.Ip_name_2)
+        tmp = self.result['IpOld']
+        if 'err' in self.result['IpOld']:
+            if 'err' not in self.result['IpNew']:
+                tmp = self.result['IpNew']
+                self.result['Ip warning'] = 'error in %s' % self.Ip_name
+            else:
+                self.result['err'] = "Both Ip signals have errors"
+                return False
+        else:
+            if 'err' not in self.result['IpNew']:
+                if abs(self.result['IpOld']['Ip'] - self.result['IpNew']['Ip']) > 0.1*0.5*(self.result['IpOld']['Ip'] + self.result['IpNew']['Ip']):
+                    if self.result['shotn'] > self.Ip_shotn_threshold:
+                        tmp = self.result['IpNew']
+                    else:
+                        tmp = self.result['IpOld']
+                    self.result['Ip warning'] = 'Ip signals differs %f vs %f' % (abs(self.result['IpOld']['Ip'] - self.result['IpNew']['Ip']), 0.1*0.5*(self.result['IpOld']['Ip'] + self.result['IpNew']['Ip']))
+            else:
+                tmp = self.result['IpOld']
+                self.result['Ip warning'] = 'error in %s' % self.Ip_name_2
+
+        self.result.update({
+            'date': self.sht[self.Ip_name]['time'],
+            'T_start': tmp['T_start'],
+            'T_stop': tmp['T_stop'],
+            'T_max': tmp['T_max'],
+            'Ip_max': tmp['Ip_max'],
+            'T_flattop_start': tmp['T_flattop_start'],
+            'T_flattop_stop': tmp['T_flattop_stop'],
+            'Ip': tmp['Ip'],
+            'flattop_start_ind': tmp['flattop_start_ind'],
+            'flattop_stop_ind': tmp['flattop_stop_ind'],
+            'T_start_index': tmp['T_start_index'],
+            'T_stop_index': tmp['T_stop_index'],
+            'used_Ip': tmp['used_Ip']
         })
         return True
 
@@ -538,7 +590,7 @@ class Shot:
 
         der_window = 300
         half_window: int = der_window // 2
-        der_threshold = 3e-6
+        der_threshold = 2e-6
         min_tau = 50
         max_tau = 500
         signal = []
@@ -558,7 +610,9 @@ class Shot:
             if signal[i]['der_ave'] >= der_threshold:
                 max_ind = i
                 min_ind = i
-                for j in range(i + min_tau, i + max_tau):
+                ave_max = 0
+                for j in range(i, i + max_tau):
+                    ave_max = max(ave_max, signal[j]['ave'])
                     if signal[j]['der_ave'] > signal[max_ind]['der_ave']:
                         max_ind = j
                     elif signal[j]['der_ave'] < signal[min_ind]['der_ave']:
@@ -567,7 +621,9 @@ class Shot:
                     self.result['ELM2'].append({
                         't': max_ind * 1e-6,
                         'tau': (min_ind - max_ind),
-                        'der': signal[max_ind]['der_ave']
+                        'der': signal[max_ind]['der_ave'],
+                        'level': signal[max_ind]['ave'],
+                        'max': ave_max
                     })
                     i += max_tau
             i += min_tau
@@ -783,7 +839,8 @@ class Shot:
         freq_reduction: int = 1
         scale: int = 30
 
-        flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
+        #flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
+        start_ind = self.result['T_start_index'] // (freq_reduction * scale)
         flattop_stop_ind = self.result['flattop_stop_ind'] // (freq_reduction * scale)
 
 
@@ -794,7 +851,7 @@ class Shot:
         #    print(xx[i], yy[i])
         #fuck
 
-        if(flattop_stop_ind//scale - flattop_start_ind//scale <=1):
+        if(flattop_stop_ind//scale - start_ind//scale <=1):
             self.result['SXR'] = {
                 'err': 'too small flattop'
             }
@@ -802,11 +859,11 @@ class Shot:
             return False
 
         self.result['SXR'] = {
-            'max': max(yy[flattop_start_ind//scale: flattop_stop_ind//scale]) - y[333],
+            'max': max(yy[start_ind//scale: flattop_stop_ind//scale]) - y[333],
             'time': []
         }
         der_threshold: float = self.result['SXR']['max'] * 0.03
-        i: int = flattop_start_ind
+        i: int = start_ind
         while i < flattop_stop_ind - 1:
             if y[i] - y[i + 1] > der_threshold:
 
@@ -856,9 +913,10 @@ class Shot:
         fuck'''
         return False
 
-def save(res):
-    with open(db_file, 'w') as file:
-        json.dump(res, file, separators=(',', ':'))
+def save(res, fast=True):
+    if not fast:
+        with open(db_file, 'w') as file:
+            json.dump(res, file, separators=(',', ':'))
     with open(db_file_bin, 'wb') as file:
         msgpack.dump(res, file)
     print('\nSAVED\n')
@@ -891,7 +949,7 @@ for shotn in range(start_shotn, stop_shotn + 1):
         save(res)
         last_save = shotn
 
-save(res)
+save(res, fast=False)
 
 print('Code OK.')
 

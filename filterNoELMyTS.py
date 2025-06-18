@@ -4,8 +4,9 @@ import copy
 
 saw_filter = 5e-4
 max_elm_delay = 2e-4
+#max_elm_delay = 2e-3
 
-# this code was used to make before/after ELM dataset for Yashin.
+
 
 db = None
 #with open('\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index_new.json', 'r') as file:
@@ -31,6 +32,10 @@ for shotn in db:
             continue
         if elm['tau'] <= 0:
             continue
+        if elm['level'] >= 1.2:
+            continue
+        if elm['max'] - elm['level'] <= 0.09:
+            continue
         for saw in shot['SXR']['time']:
             if abs(saw['time'] - shot['ELM2'][elm_i]['t']) <= saw_filter:
                 #print('SAW filter: ', shot['ELM2'][elm_i]['t'], saw['time'], shotn)
@@ -41,7 +46,10 @@ for shotn in db:
 
             for t in shot['TS']['time']:
                 if t_from <= t <= t_to:
-                    if t <=aa (t_from + t_to)*0.5:
+                    if not -0.02 < (t - elm['t'])*1e3 < 0.2: #filter close to elms
+                        #print(t - elm['t'])
+                        continue
+                    if t <= (t_from + t_to)*0.5:
                         before += 1
                     else:
                         after += 1
@@ -63,14 +71,27 @@ print('loaded')
 elm_dat = []
 
 count = 0
-with open('out/normalised_elmy.csv', 'w') as f:
+with open('out/normalised_not_elmy.csv', 'w') as f:
     for elm in elmy:
         if count % 100 == 0:
             print('%d' % (100 * count/len(elmy)))
         count += 1
         for e in norm:
-            if e['R-R_lcfs'] < -3:
+            if e['R-R_lcfs'] < -5:
                 continue
+
+            if e['NBI1'] + e['NBI2'] < 100:
+                pass
+                #continue
+
+            if not e['<Te>'] - 100 <= 283 <= e['<Te>'] + 100:
+                pass
+                #continue
+
+            if not e['<ne>'] - 1 <= 4.9 <= e['<ne>'] + 1:
+                pass
+                #continue
+
             if (e['shotn']) == elm['shotn'] and elm['time'] - 1e-3 <= e['time'] * 1e-3 <= elm['time'] + 1e-3:
                 elm_dat.append(e)
                 f.write('%d, %.2f, %.3f, %.3e, %.3e, %d, %.3f, %.3f, %.3f, %.2f, %.3f, %.3f, %d, %.2f, %.2f, %.2f, %.2f, %.2f, %.1f, %.3f, %.3f, %.3f\n'
@@ -97,6 +118,8 @@ with open('out/normalised_elmy.csv', 'w') as f:
                               elm['level'],
                               elm['max']
                               ))
+
+print(len(elm_dat))
 
 with open('out/normalised_elm.json', 'w') as f:
     json.dump(elm_dat, f)
