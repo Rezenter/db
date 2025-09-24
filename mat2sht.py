@@ -1,7 +1,7 @@
 import shtRipper
 import scipy.io
-
-shotn = 40
+from pathlib import Path
+import time
 
 full_names = {
     'I_P': {
@@ -79,47 +79,72 @@ full_names = {
         'unit': 'I(A)',
         'offset': 0,
         'yRes': 5,
-        'name': 'Magnetic flux, some loop'
+        'name': 'Magnetic flux, loop №',
+        'arr': True
     },
     'I_PF_ref': {
         'comment': '???',
         'unit': 'I(A)',
         'offset': 0,
         'yRes': 5,
-        'name': 'Программа тока Ipf'
+        'name': 'Программа тока №',
+        'arr': True
     },
     'u_PF': {
         'comment': '???',
         'unit': 'I(A)',
         'offset': 0,
         'yRes': 5,
-        'name': 'u_PF'
+        'name': 'Управляющий сигнал №',
+        'arr': True
     }
 }
 
-mat = scipy.io.loadmat('\\\\172.16.12.127\\Pub\\!!!CURRENT_COIL_METHOD\\magn_data_mat\\shot_%06d.mat' % shotn)
-out_path = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\test_moscow_sht\\'
 
-#print(mat['time'][0])
+in_path: Path = Path('\\\\172.16.12.127\\Pub\\!!!CURRENT_COIL_METHOD\\magn_data_mat\\')
+out_path: Path = Path('\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\test_moscow_sht\\')
 
-t = mat['time'][0].tolist()
 
-dat = mat['data'][0].tolist()
+while (1):
+    mats = [str(x).split('\\')[-1][:-4] for x in in_path.iterdir()]
+    shts = [str(x).split('\\')[-1][:-4] for x in out_path.iterdir()]
 
-to_pack = {}
-for i in range(len(mat['data'][0].dtype.names)):
-    name = mat['data'][0].dtype.names[i]
-    #print(name)
-    #print(dat[0][i][0].tolist())
-    if name in full_names:
-        to_pack[full_names[name]['name']] = full_names[name]
-        to_pack[full_names[name]['name']]['tMin'] = t[0]
-        to_pack[full_names[name]['name']]['tMax'] = t[-1]
-        to_pack[full_names[name]['name']]['y'] = dat[0][i][0].tolist()
-    else:
-        print(name, ' not listed')
+    for m in mats:
+        if m not in shts:
+            print(m)
 
-print('%sshot_%06d.sht' % (out_path, shotn))
-packed = shtRipper.ripper.write(path=out_path, filename='shot_%06d.SHT' % shotn, data=to_pack)
+            shotn = int(m[5:])
+
+            mat = scipy.io.loadmat('%s\\shot_%06d.mat' % (in_path, shotn))
+            #print(mat['time'][0])
+
+            t = mat['time'][0].tolist()
+
+            dat = mat['data'][0].tolist()
+
+            to_pack = {}
+            for i in range(len(mat['data'][0].dtype.names)):
+                name = mat['data'][0].dtype.names[i]
+                #print(name)
+                #print(dat[0][i][0].tolist())
+                if name in full_names:
+                    if 'arr' not in full_names[name] or not full_names[name]['arr']:
+                        to_pack[full_names[name]['name']] = full_names[name]
+                        to_pack[full_names[name]['name']]['tMin'] = t[0]
+                        to_pack[full_names[name]['name']]['tMax'] = t[-1]
+                        to_pack[full_names[name]['name']]['y'] = dat[0][i][0].tolist()
+                    else:
+                        for j in range(len(dat[0][i])):
+                            n = full_names[name]['name'] + '%d' % j
+                            to_pack[n] = full_names[name].copy()
+                            to_pack[n]['tMin'] = t[0]
+                            to_pack[n]['tMax'] = t[-1]
+                            to_pack[n]['y'] = dat[0][i][j].tolist()
+                else:
+                    print(name, ' not listed')
+
+            print('%sshot_%06d.sht' % (out_path, shotn))
+            packed = shtRipper.ripper.write(path=out_path, filename='shot_%06d.SHT' % shotn, data=to_pack)
+    time.sleep(1)
 
 print('OK')
