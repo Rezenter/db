@@ -6,11 +6,28 @@ import json
 import utils.auxiliary as aux
 import msgpack
 
-start_shotn: int = 37000
+
+#saw ideas:
+# 1) compare sums over period prev and next. if equal, then snake
+# 2) catch both saw and snake events. Then sort them in postprocessing via period and amp%.
+
+#start_shotn: int = 42465
+#start_shotn: int = 45898 #10 big tooth
+#start_shotn: int = 43770
+start_shotn: int = 37622  #not saw, snake
+#start_shotn: int = 44335  #snake + saw
+
+
+#start_shotn: int = 38296  #snake, HXR peaks
+#start_shotn: int = 37804  #snake, no saw
+#start_shotn: int = 39499  #false-true events before saw amp%=0.04
+#start_shotn: int = 38596  #false-true events
+
+
+
 #start_shotn: int = 37000
 
 # calc inner- outer- spacings between LCFS and walls, Rsep
-# calc Ip using both signals. Trust second for >45000
 
 #start_shotn: int = 42777
 
@@ -18,7 +35,7 @@ stop_shotn: int = 0
 with open('\\\\172.16.12.127\\Data\\SHOTN.txt', 'r') as f:
     stop_shotn = int(f.readline()) - 1
     print('Stop at: ', stop_shotn)
-stop_shotn = 46128
+#stop_shotn = 37092
 
 '''
 shot_list = []  #overriding
@@ -33,12 +50,12 @@ with open('in/4Nikita.csv', 'r') as f:
 overrite: bool = False
 
 #db_file: str = 'db/index_test.json'
-db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.json'
-db_file_bin: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index.msgpk'
+db_file: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index_d.json'
+db_file_bin: str = '\\\\172.16.12.127\\Pub\\!!!TS_RESULTS\\shots\\index_d.msgpk'
 
 bad_sht: list[int] = []
 
-save_interval: int = 1000
+save_interval: int = 100
 sht_size_threshold: int = 8  # MB
 
 plasma_current_threshold: float = 50e3  # A
@@ -94,6 +111,19 @@ def dump(x, y):
         for i in range(len(x)):
             file.write('%.2e, %.2e\n' % (x[i], y[i]))
 
+def window_der(y:list[float], x:int, h_window:int)->float:
+    sumxy: float = 0
+    sumx: float = 0
+    sumy: float = 0
+    sumxx: float = 0
+    if h_window > x or len(y)< x + h_window:
+        return 1e99
+    for i in range(x-h_window, x+h_window):
+        sumx += i
+        sumxx += i*i
+        sumy += y[i]
+        sumxy += i * y[i]
+    return (h_window*2*sumxy - sumx*sumy)/(h_window*2*sumxx - sumx*sumx)
 
 class Shot:
     Ip_name: str = 'Ip внутр.(Пр2ВК) (инт.18)'
@@ -109,7 +139,6 @@ class Shot:
     D_alpha_42: str = 'D-alfa  хорда R=42 cm'
     D_alpha_50: str = 'D-alfa  хорда R=50 cm'
     SXR_15: str = 'SXR 15 мкм'
-    #SXR_50: str = SXR_15
     SXR_50: str = 'SXR 50 mkm'
     EFC_N: str = 'EFC N (инт. 27)'
     EFC_E: str = 'EFC E (инт. 30)'
@@ -147,8 +176,9 @@ class Shot:
             self.scan_trapped()
             #self.scan_Zeff()
         self.scan_isotope()
-        self.scan_SXR()
-
+        self.scan_SXR(self.SXR_15)
+        self.scan_SXR(self.SXR_50)
+        pass
         #print(self.result['plasma isotope'])
 
     def scan_isotope(self) -> bool:
@@ -239,6 +269,7 @@ class Shot:
             return res
 
         res.update({
+            'ok': True,
             'T_start': ip_x[start_ind],
             'T_stop': ip_x[stop_ind],
             'T_max': ip_x[max_ind],
@@ -721,6 +752,9 @@ class Shot:
             with open('\\\\172.16.12.130\\d\\data\\db\\calibration\\abs\\processed\\%s.json' % ts_res['absolute_name'], 'r') as f:
                 ts_res['A'] = json.load(f)['A']
 
+            print('WARNING!!! Ne correction!!!')
+            print('use csv instead')
+
             #poly_los_ind = 9
             poly_los_ind = 0
             r_min = 999
@@ -824,79 +858,304 @@ class Shot:
             }
         return True
 
-    def scan_SXR(self) -> bool:
-        if self.SXR_15 not in self.sht:
-            self.result['SXR'] = {
-                'err': 'SHT file has no SXR_15 signal.'
+    def scan_SXR(self, name: str) -> bool:
+        settings = {
+            'SXR 15 мкм': {
+                'der': 0.004,
+                'max_der': 0.0007,
+                'amp': 0.04,
+                'ampp': 0.05,
+                'dt': 0.00002,
+                'dT': 0.00018,
+                'noise': 2.5,
+                'ddt': 0.0008,
+                'impossible_der': 0.09
+            },
+            'SXR 50 mkm':{
+                'der': 0.003,
+                'max_der': 0.0002,
+                'amp': 0.02,
+                'ampp': 0.04,
+                'dt': 0.00002,
+                'dT': 0.00018,
+                'noise': 2.5,
+                'ddt': 0.0004,
+                'impossible_der': 0.022
             }
-            return False
-        if self.SXR_50 not in self.sht:
-            self.result['SXR'] = {
+        }
+
+
+        if name not in self.sht:
+            self.result[name] = {
                 'err': 'SHT file has no SXR_50 signal.'
             }
             return False
 
-        freq_reduction: int = 1
-        scale: int = 30
+        scale: int = 32
 
-        #flattop_start_ind = self.result['flattop_start_ind'] // (freq_reduction * scale)
-        start_ind = self.result['T_start_index'] // (freq_reduction * scale)
-        flattop_stop_ind = self.result['flattop_stop_ind'] // (freq_reduction * scale)
+        start_ind = self.result['T_start_index'] // (scale)
+        flattop_stop_ind = self.result['flattop_stop_ind'] // (scale)
 
-
-        x, y = downsample(x=self.sht[self.SXR_50]['x'], y=self.sht[self.SXR_50]['y'], scale=scale)
-
-        xx, yy = downsample(x=x, y=y, scale=scale)
-        #for i in range(flattop_start_ind//scale, flattop_stop_ind//scale):
-        #    print(xx[i], yy[i])
-        #fuck
+        x, y = downsample(x=self.sht[name]['x'], y=self.sht[name]['y'], scale=scale)
+        #xx, yy = downsample(x=x, y=y, scale=scale)
 
         if(flattop_stop_ind//scale - start_ind//scale <=1):
-            self.result['SXR'] = {
+            self.result[name] = {
                 'err': 'too small flattop'
             }
-            #print("FUCK!")
             return False
 
-        self.result['SXR'] = {
-            'max': max(yy[start_ind//scale: flattop_stop_ind//scale]) - y[333],
+        self.result[name] = {
+            #'max': max(yy[start_ind//scale: flattop_stop_ind//scale]) - sum(y[300:333])/33,
+            'max': max(y[start_ind: flattop_stop_ind]) - sum(y[300:333])/33,
             'time': []
         }
-        der_threshold: float = self.result['SXR']['max'] * 0.03
-        i: int = start_ind
-        while i < flattop_stop_ind - 1:
-            if y[i] - y[i + 1] > der_threshold:
+        if self.result[name]['max'] < 0.3:
+            self.result[name]['err'] = 'signal too small'
+            return False
+        if self.result[name]['max'] > 4.5:
+            self.result[name]['warning'] = 'signal offscale'
 
-                highRes_ind = i * freq_reduction * scale
-                #print(self.sht[self.SXR_50]['x'][highRes_ind - scale * 2], self.sht[self.SXR_50]['x'][highRes_ind + scale * 2])
+        i: int = start_ind
+        prev: int = -1
+        while i < flattop_stop_ind - 1:
+            if x[i] < 0.135: # gas breakdown
+                i += 1
+                continue
+            if -window_der(y=y, x=i, h_window=2) > (y[i]-sum(y[300:333])/33)*settings[name]['der']:
+                highRes_ind = i * scale
                 max_der: float = 0
                 max_ind: int = highRes_ind
-                der_halfWindow: int = 20
-                for j in range(highRes_ind - scale * 1, highRes_ind + scale * 1):
-                    candidate: float = self.sht[self.SXR_50]['y'][j - der_halfWindow] - \
-                                        self.sht[self.SXR_50]['y'][j + der_halfWindow]
-                    #print(j / 1000, self.sht[self.SXR_50]['y'][j], candidate)
+                der_halfWindow: int = 30
+
+                for j in range(highRes_ind - scale * 5, highRes_ind + scale * 5):
+                    candidate = -window_der(y=self.sht[name]['y'], x=j, h_window=der_halfWindow)
                     if candidate > max_der:
                         max_der = candidate
                         max_ind = j
-                        #print('__________________up')
-                las_time: int = self.find_closest_TS_t(self.sht[self.SXR_50]['x'][max_ind])
-                amp = (y[i - 5] - y[i + 5])
-                if amp > 0.002 and (len(self.result['SXR']['time']) == 0 or self.sht[self.SXR_50]['x'][max_ind] != self.result['SXR']['time'][-1]['time']):
-                    delay = 999
-                    if las_time > 0:
-                        delay = las_time - self.sht[self.SXR_50]['x'][max_ind]
-                    period = 999
-                    if len(self.result['SXR']['time']):
-                        period = self.sht[self.SXR_50]['x'][max_ind] - self.result['SXR']['time'][-1]['time']
-                    if period > 0.4*1e-3:
-                        self.result['SXR']['time'].append({
-                            'time': self.sht[self.SXR_50]['x'][max_ind],
-                            'laser_time': las_time,
-                            'las_delay': delay,
-                            'amp': amp,
-                            'period': period
-                        })
+                if prev == max_ind:
+                    i += 1
+                    continue
+                prev = max_ind
+                if len(self.result[name]['time']) != 0 and self.sht[name]['x'][max_ind] == self.result[name]['time'][-1]['time']:
+                    i += 1
+                    continue
+
+                #if max_der < settings[name]['max_der']:
+                #    i += 1
+                    #print(self.sht[name]['x'][max_ind], max_der, 'bad max der')
+                #    continue
+
+                mark: float = max_der * 2 / settings[name]['max_der']
+                if max_der > settings[name]['impossible_der']:
+                    mark = 5 - max_der*10
+                print(self.sht[name]['x'][max_ind], mark, max_der)
+
+                i_prev: int = max_ind
+                tmp: float = self.sht[name]['y'][max_ind]
+                for k in range(max_ind - 200, max_ind):
+                    if tmp <= self.sht[name]['y'][k]:
+                        tmp = self.sht[name]['y'][k]
+                        i_prev = k
+
+                der_prev = window_der(y=self.sht[name]['y'], x=i_prev-der_halfWindow, h_window=der_halfWindow)
+                print('   ', der_prev, 'prev der')
+                if der_prev <= 0:
+                    i_new = i_prev + 1
+                    flag: bool = False
+                    while sum(self.sht[name]['y'][i_prev-5:i_prev+5])/10 + der_prev * (i_new - i_prev) <= self.sht[name]['y'][max_ind] + max_der * (max_ind - i_new):
+                        #print(i_new, self.sht[name]['y'][i_prev], self.sht[name]['y'][max_ind], sum(self.sht[name]['y'][i_prev-5:i_prev+5])/10 + der_prev * (i_new - i_prev), self.sht[name]['y'][max_ind] + max_der * (max_ind - i_new))
+                        i_new += 1
+
+                        if i_new == max_ind:
+                            print('   unable to find prev', i_prev, sum(self.sht[name]['y'][i_prev-5:i_prev+5])/10)
+                            flag = True
+                            break
+                    if flag:
+                        i+=1
+                        continue
+                    print('   ', self.sht[name]['x'][i_prev], self.sht[name]['x'][i_new],'overwrite prev')
+                    i_prev = i_new
+                    der_prev = window_der(y=self.sht[name]['y'], x=i_prev - der_halfWindow, h_window=der_halfWindow)
+                #while der_prev <= 0 and i_prev - der_halfWindow > 0:
+                #    i_prev -= 1
+                #    der_prev = window_der(y=self.sht[name]['y'], x=i_prev, h_window=der_halfWindow)
+                i_next: int = max_ind
+                tmp = self.sht[name]['y'][max_ind]
+                for k in range(max_ind, max_ind + 200):
+                    if tmp >= self.sht[name]['y'][k]:
+                        tmp = self.sht[name]['y'][k]
+                        i_next = k
+
+                der_next = window_der(y=self.sht[name]['y'], x=i_next + der_halfWindow, h_window=der_halfWindow)
+                print('   ', der_next, 'next der')
+                if der_next <= 0:
+                    i_new = i_next - 1
+                    flag: bool = False
+                    while self.sht[name]['y'][max_ind] - max_der * (i_new - max_ind) <= sum(self.sht[name]['y'][i_next - 5:i_next + 5]) / 10 + der_next * (i_next - i_new):
+                        # print(i_new, self.sht[name]['y'][i_prev], self.sht[name]['y'][max_ind], sum(self.sht[name]['y'][i_prev-5:i_prev+5])/10 + der_prev * (i_new - i_prev), self.sht[name]['y'][max_ind] + max_der * (max_ind - i_new))
+                        i_new -= 1
+                        if i_new == max_ind:
+                            print('   unable to find next')
+                            flag = True
+                            break
+                    if flag:
+                        i += 1
+                        continue
+                    print('   ', self.sht[name]['x'][i_next], self.sht[name]['x'][i_new], 'overwrite next')
+                    i_next = i_new
+                    der_next = window_der(y=self.sht[name]['y'], x=i_next + der_halfWindow, h_window=der_halfWindow)
+                try:
+                    print('   ', mark, self.sht[name]['x'][i_prev], self.sht[name]['x'][i_next], 'prev & next')
+                    mark += 0.2 - 2**((settings[name]['dt'] - (self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev])) / settings[name]['dt'])
+                    print('   ', mark, 2**((settings[name]['dt'] - (self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev])) / settings[name]['dt']), self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev], settings[name]['dt'], 'dt1')
+
+                    mark += 0.1-2**((self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev] - settings[name]['dT']) / (0.1 * settings[name]['dT']))
+                    print('   ', mark, 2**((self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev] - settings[name]['dT']) / settings[name]['dT']), self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev], settings[name]['dT'], 'dt2')
+
+                    if mark < -100:
+                        i+=1
+                        continue
+
+                    #print(der_prev, max_der, der_next)
+                    mark += 0.2-2**((settings[name]['ddt'] - (max_der - der_prev)) / (0.2*settings[name]['ddt']))
+                    print('   ', mark, max_der - der_prev, settings[name]['ddt'], 'ddt1')
+                    mark += 0.2-2**((settings[name]['ddt'] - (max_der - der_next)) / (0.2*settings[name]['ddt']))
+                    print('   ', mark, max_der - der_next, settings[name]['ddt'], 'ddt2')
+                    if mark < -100:
+                        i+=1
+                        continue
+
+                    amp: float = (sum(self.sht[name]['y'][i_prev-33:i_prev]) - sum(self.sht[name]['y'][i_next: i_next+33]))/33
+                    if amp <= 0:
+                        i+=1
+                        print('   ', amp, 'amp continue')
+                        continue
+                    mark += amp*20 + 0.5-2**((settings[name]['amp'] - amp) / settings[name]['amp'])
+                    print('   ', mark, amp, settings[name]['amp'], 'amp')
+                    if mark < -100:
+                        i+=1
+                        continue
+
+                    mark += 0.02 - 2**((0.05 - self.sht[name]['y'][i_next]) / 0.03)
+                    print('   ', mark, self.sht[name]['y'][i_next],  'low value, HXR?')
+
+                    if mark < -100:
+                        i+=1
+                        continue
+
+                    der_next_next = abs(window_der(y=self.sht[name]['y'], x=i_next + (i_next - i_prev)//2, h_window=der_halfWindow))
+                    der_prev_prev = abs(window_der(y=self.sht[name]['y'], x=i_prev - (i_next - i_prev)//2, h_window=der_halfWindow))
+
+                    mark += 0.7-2**(1.5*der_next_next / max_der)
+                    print('   ', mark, der_next_next, i_next + (i_next - i_prev)//2,  max_der, 'max_der2')
+                    mark += 0.7-2**(1.5*der_prev_prev / max_der)
+                    print('   ', mark, der_prev_prev, i_prev - (i_next - i_prev)//2,  max_der, 'max_der3')
+                    mark += 1 - 3 ** ((2 * der_prev_prev / max_der) * (2*der_next_next / max_der))
+                    print('   ', mark, 'max_der4')
+                    next_amp = (sum(self.sht[name]['y'][i_prev -10:i_prev]) - sum(self.sht[name]['y'][i_next:i_next +10]))/10
+                    if next_amp <= 1e-7:
+                        i += 1
+                        print('   ', next_amp, 'next_amp continue')
+                        continue
+                    mark += 2 - 4**(0.5*amp / next_amp)
+                    print('   ', mark, next_amp, 'next amp')
+                    next_next_amp = (sum(self.sht[name]['y'][i_prev - (i_next - i_prev)//2 - 10:i_prev - (i_next - i_prev)//2]) - sum(self.sht[name]['y'][i_next + (i_next - i_prev)//2:i_next + (i_next - i_prev)//2 + 10])) / 10
+                    if next_next_amp <= 1e-7:
+                        i += 1
+                        print('   ', next_next_amp, 'next_next_amp continue')
+                        continue
+                    mark += 1.5 - 2 ** (0.1 * amp / next_next_amp)
+                    print('   ', mark, next_next_amp, 'next next amp')
+
+                    mark += 0.5 - 2 ** ((next_next_amp - amp) / (0.3 * amp))
+                    print('   ', mark, next_next_amp, 'next next amp2')
+
+                    tmp = sum(self.sht[name]['y'][i_next:i_next +10])/10 - self.sht[name]['y'][max_ind]
+                    if abs(tmp) <= 1e-8:
+                        i += 1
+                        print('   next continue')
+                        continue
+                    mark += 2-10**((0.06*amp)/tmp)
+                    print('   ', mark, (sum(self.sht[name]['y'][i_next:i_next +10])/10 - self.sht[name]['y'][i_next])/(0.3*amp), 'next')
+                    tmp = (self.sht[name]['y'][max_ind] - sum(self.sht[name]['y'][i_prev-10:i_prev]) / 10)
+                    if abs(tmp) <= 1e-8:
+                        i += 1
+                        print('   prev continue')
+                        continue
+                    mark += 2-10**((0.06*amp) / tmp)
+                    print('   ', mark, tmp, 'prev')
+                    #if -der_next_next < settings[name]['max_der'] and -der_prev_prev < settings[name]['max_der']:
+                    #    i += 1
+                    #    continue
+                    if mark < -100:
+                        i+=1
+                        continue
+                    bot: float = (sum(self.sht[name]['y'][i_prev-33:i_prev])-sum(self.sht[name]['y'][300:333]))
+                    if abs(bot) <= 1e-7:
+                        i += 1
+                        print('   bot continue')
+                        continue
+                    ampp: float = amp*33/bot
+                    #print(self.sht[name]['x'][max_ind], ampp, max_der, self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev], self.sht[name]['x'][max_ind], self.sht[name]['x'][i_prev], self.sht[name]['x'][i_next])
+                    mark += settings[name]['ampp']*30-2**(settings[name]['ampp'] / ampp)
+                    print('   ', mark, ampp, settings[name]['ampp'], 'amp %')
+
+                    #if ampp > settings[name]['ampp'] and (len(self.result[name]['time']) == 0 or self.sht[name]['x'][max_ind] != self.result[name]['time'][-1]['time']):
+                    if 1:
+                        first = 0
+                        second = 0
+                        for k in range(200):
+                            first += (self.sht[name]['y'][i_prev - k] - (self.sht[name]['y'][i_prev - 200] + (self.sht[name]['y'][i_prev] - self.sht[name]['y'][i_prev - 200])*(200 - k)/200))**2
+                            second += (self.sht[name]['y'][i_next + k] - (self.sht[name]['y'][i_next] + (self.sht[name]['y'][i_next+200] - self.sht[name]['y'][i_next])*k/200))**2
+                        noise = (math.sqrt(first/200) + math.sqrt(second/200))*0.5* settings[name]['noise']
+
+                        mark += 1.5-4**(noise / amp)
+                        print('   ', mark, noise, 'noise')
+                        #if noise > amp:
+                        #    i += 1
+                            #print(self.sht[name]['x'][max_ind], noise, amp, first, second, 'bad noise')
+                        #    continue
+                        #print('   ', amp, noise, 'noise')
+                        las_time: int = self.find_closest_TS_t(self.sht[name]['x'][max_ind])
+                        delay = 999
+                        if las_time > 0:
+                            delay = las_time - self.sht[name]['x'][max_ind]
+                        period = 999
+                        if len(self.result[name]['time']):
+                            period = self.sht[name]['x'][max_ind] - self.result[name]['time'][-1]['time']
+                            mark += 0.05-2**((0.3e-3 - period)/0.2e-3)
+                            print('   ', mark, period, 'period')
+
+                            #tmp = min(period, 12e-3)
+                            #mark += 0.5 - 2 ** (tmp / 4e-3)
+                            #print('   ', mark, tmp, 'period2')
+                        #if period > 0.2*1e-3:
+                        if mark > 1:
+                            print('saved', self.sht[name]['x'][max_ind], mark)
+                            self.result[name]['time'].append({
+                                'time': self.sht[name]['x'][max_ind],
+                                'laser_time': las_time,
+                                'las_delay': delay,
+                                'ampV': amp,
+                                'amp%': ampp,
+                                'period': period,
+                                't_max': self.sht[name]['x'][i_prev],
+                                'dt': self.sht[name]['x'][i_next] - self.sht[name]['x'][i_prev],
+                                'der': max_der,
+                                'der_prev': der_prev,
+                                'der_next': der_next,
+                                'noise': noise,
+                                'der_next_next': der_next_next,
+                                'der_prev_prev': der_prev_prev,
+                                't_next_next': self.sht[name]['x'][i_next + (i_next - max_ind) + der_halfWindow],
+                                't_prev_prev': self.sht[name]['x'][i_prev - (max_ind- i_prev) - der_halfWindow],
+                                'mark': mark
+                            })
+                            i = math.ceil(i_next/scale) + 10
+                            continue
+                except OverflowError:
+                    pass
             i += 1
         '''
         debug = {
@@ -905,12 +1164,11 @@ class Shot:
             'down_x': x,
             'down_y': y,
             'der': [y[i] - y[i + 1] for i in range(0, len(y) - 1)],
-            'res': self.result['SXR'],
-            'der_tres': der_threshold
+            'res': self.result[name]
         }
-        with open('out/debug.json', 'w') as outfile:
+        with open('out/debug_%s.json' % name, 'w') as outfile:
             json.dump(debug, outfile, indent=2)
-        fuck'''
+        '''
         return False
 
 def save(res, fast=True):

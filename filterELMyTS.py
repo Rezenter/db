@@ -41,7 +41,7 @@ for shotn in db:
 
             for t in shot['TS']['time']:
                 if t_from <= t <= t_to:
-                    if t <=aa (t_from + t_to)*0.5:
+                    if t <= (t_from + t_to)*0.5:
                         before += 1
                     else:
                         after += 1
